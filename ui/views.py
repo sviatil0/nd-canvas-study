@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -353,7 +354,7 @@ def graph_view(request, cid: int):
 def followup(request, cid: int, topic: str):
     cdir = _course_dir_for(cid)
     selection = request.POST.get("selection", "").strip()
-    mode = request.POST.get("mode", "ask").strip()  # "ask" | "expand"
+    mode = request.POST.get("mode", "ask").strip()
     user_q = request.POST.get("question", "").strip()
     if not selection:
         return HttpResponse(json.dumps({"error": "no selection"}), status=400, content_type="application/json")
@@ -389,6 +390,15 @@ def followup(request, cid: int, topic: str):
     if user_q:
         prompt += f"\n\n--- STUDENT QUESTION ---\n{user_q}"
 
+    backend = os.environ.get("USE_BACKEND", "gemini")
+    if backend == "gemini":
+        from gemini_client import generate
+        try:
+            text = generate(prompt, max_output_tokens=1024)
+        except Exception as e:
+            return HttpResponse(json.dumps({"error": str(e)}), status=500, content_type="application/json")
+        return HttpResponse(json.dumps({"answer": text}), content_type="application/json")
+    # claude fallback
     import shutil, subprocess
     if not shutil.which("claude"):
         return HttpResponse(json.dumps({"error": "claude CLI missing"}), status=500, content_type="application/json")
@@ -525,29 +535,39 @@ def grade_answer(request, cid: int):
         "5. If correct: confirm and note any inefficiencies.\n"
         "Use Markdown + LaTeX ($...$ inline, $$...$$ block). Keep under 350 words."
     )
-    image_block = ""
-    if image_paths:
-        image_block = (
-            "\n--- STUDENT ATTEMPT IMAGE(S) ---\n"
-            "Read the image file(s) at the absolute path(s) below to see the student's "
-            "handwritten/screenshotted work, then grade as instructed:\n"
-            + "\n".join(f"  {p}" for p in image_paths)
-            + "\n"
-        )
     prompt = (
         f"--- COURSE REFERENCE ---\n{context}\n\n"
         f"--- PROBLEM ---\n{problem}\n\n"
-        f"--- STUDENT ATTEMPT (typed) ---\n{attempt or '(none — see image)'}\n"
-        f"{image_block}"
-        f"\n--- TASK ---\n{instruction}"
+        f"--- STUDENT ATTEMPT (typed) ---\n{attempt or '(none — see image)'}\n\n"
+        f"--- TASK ---\n{instruction}"
     )
+    if image_paths:
+        prompt = (
+            "Image(s) of the student's handwritten/screenshotted work are attached. "
+            "Read them along with the typed text below.\n\n" + prompt
+        )
+
+    backend = os.environ.get("USE_BACKEND", "gemini")
+    if backend == "gemini":
+        sys.path.insert(0, str(ROOT))
+        from gemini_client import generate, generate_with_images
+        try:
+            if image_paths:
+                text = generate_with_images(prompt, image_paths, max_output_tokens=2048)
+            else:
+                text = generate(prompt, max_output_tokens=2048)
+        except Exception as e:
+            return HttpResponse(json.dumps({"error": str(e)}), status=500, content_type="application/json")
+        return HttpResponse(json.dumps({"feedback": text, "images": len(image_paths)}),
+                            content_type="application/json")
 
     import shutil, subprocess
     if not shutil.which("claude"):
         return HttpResponse(json.dumps({"error": "claude CLI missing"}), status=500, content_type="application/json")
     cli_args = ["claude", "-p", prompt]
     if image_paths:
-        cli_args = ["claude", "-p", "--allowed-tools", "Read", prompt]
+        cli_args = ["claude", "-p", "--allowedTools", "Read",
+                    prompt + "\n\nImages:\n" + "\n".join(image_paths)]
     try:
         proc = subprocess.run(cli_args, capture_output=True, text=True, timeout=240)
     except subprocess.TimeoutExpired:
@@ -629,21 +649,65 @@ def jobs_status(request, cid: int):
         failed = len(re.findall(r"^\s*✗ \[", text, re.M))
         cost_match = re.search(r"Estimated cost: ~\$([\d.]+)", text)
         cost = float(cost_match.group(1)) if cost_match else 0.0
+        rpm_match = re.search(r"@ (\d+) RPM", text)
+        rpm = int(rpm_match.group(1)) if rpm_match else None
+        workers_match = re.search(r"(\d+) workers @", text)
+        workers = int(workers_match.group(1)) if workers_match else None
+        model_match = re.search(r"using ([\w.\-]+) on", text)
+        model = model_match.group(1) if model_match else None
         finished = "Done." in text
+        # Process actually still alive?
+        running = False
+        if not finished:
+            try:
+                # Quick mtime heuristic — log updated within last 90s
+                running = (Path(path).stat().st_mtime > (Path(path).stat().st_mtime - 0)) and \
+                          (text.splitlines()[-1].strip() != "")
+                # Better: subprocess check
+                import subprocess
+                pid_check = subprocess.run(["pgrep", "-f", f"ocr_{name}.py"],
+                                           capture_output=True, text=True)
+                running = bool(pid_check.stdout.strip())
+            except Exception:
+                pass
+
+        # Live-rate ETA from last 10 completed page lines
+        page_times = [float(m) for m in re.findall(r"\(\d+c, ([\d.]+)s\)", text)][-20:]
+        avg_page_s = sum(page_times) / len(page_times) if page_times else None
+        remaining = max(total - done - failed, 0)
+
+        # Theoretical floor from RPM
+        rpm_floor_min = remaining / rpm if rpm else None
+        # Observed throughput
+        observed_min = (remaining * avg_page_s / 60 / max(workers or 1, 1)) if avg_page_s else None
+        # Use the larger of the two (real-world bound)
+        eta_min = None
+        if rpm_floor_min is not None and observed_min is not None:
+            eta_min = max(rpm_floor_min, observed_min)
+        elif rpm_floor_min is not None:
+            eta_min = rpm_floor_min
+        elif observed_min is not None:
+            eta_min = observed_min
+
         last_lines = "\n".join(text.splitlines()[-12:])
-        # Find ETA from last line
-        eta_match = re.search(r"ETA ([\d.]+)m", text.splitlines()[-2] if len(text.splitlines()) >= 2 else "")
-        eta = float(eta_match.group(1)) if eta_match else None
         jobs.append({
             "name": name,
             "log": str(path),
+            "model": model,
+            "rpm": rpm,
+            "workers": workers,
             "total": total,
             "done": done,
             "failed": failed,
+            "remaining": remaining,
             "pct": int(round(100 * done / total)) if total else 0,
             "cost_est": cost,
-            "eta_min": eta,
+            "avg_page_s": round(avg_page_s, 1) if avg_page_s else None,
+            "rpm_floor_min": round(rpm_floor_min, 1) if rpm_floor_min else None,
+            "observed_min": round(observed_min, 1) if observed_min else None,
+            "eta_min": round(eta_min, 1) if eta_min else None,
             "finished": finished,
+            "running": running,
             "tail": last_lines,
             "mtime": p.stat().st_mtime,
         })

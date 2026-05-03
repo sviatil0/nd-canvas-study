@@ -1,18 +1,19 @@
-"""LLM problem solver via local Claude Code CLI (no API billing).
+"""LLM problem solver — Vertex AI Gemini 2.5 Pro (default) with local Claude fallback.
 
-Uses `claude -p` headless mode: pipes problem + course context to the local
-claude binary, captures stdout. Inherits user's Claude Code subscription.
+Switch backend via env:
+    USE_BACKEND=gemini   (default; needs GCP_PROJECT)
+    USE_BACKEND=claude   (local claude CLI; uses your Claude Code subscription)
 """
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-CLAUDE_BIN = shutil.which("claude") or "claude"
-TIMEOUT_SEC = 180
+TIMEOUT_SEC = 240
 
 SYSTEM_PROMPT = (
     "You are an expert statistics tutor for ACMS 30440 at Notre Dame. "
@@ -52,36 +53,34 @@ def _gather_context(course_dir: Path, topic: str | None, max_chars: int = 40000)
     return ("\n\n".join(parts))[:max_chars]
 
 
-def solve(problem_text: str, course_dir: Path, topic: str | None = None) -> dict:
+def _solve_via_gemini(prompt: str) -> dict:
+    sys.path.insert(0, str(Path(__file__).parent))
+    from gemini_client import generate
+    try:
+        text = generate(prompt, system=SYSTEM_PROMPT, max_output_tokens=2048)
+    except Exception as e:
+        return {"error": str(e)}
+    return {
+        "answer": text,
+        "model": os.environ.get("GEMINI_MODEL", "gemini-2.5-pro"),
+        "input_tokens": len(prompt) // 4,
+        "output_tokens": len(text) // 4,
+        "cache_read": 0,
+    }
+
+
+def _solve_via_claude(prompt: str) -> dict:
     if not shutil.which("claude"):
-        return {"error": "`claude` CLI not on PATH. Install Claude Code."}
-
-    context = _gather_context(course_dir, topic)
-    prompt = (
-        f"{SYSTEM_PROMPT}\n\n"
-        f"Topic hint: {topic or 'general'}\n\n"
-        f"--- COURSE REFERENCE (for your reference, do not echo) ---\n"
-        f"{context}\n"
-        f"--- END REFERENCE ---\n\n"
-        f"Problem to solve:\n\n{problem_text}\n\n"
-        f"Walk me through it step by step."
-    )
-
+        return {"error": "`claude` CLI not on PATH."}
     try:
         proc = subprocess.run(
-            [CLAUDE_BIN, "-p", prompt],
-            capture_output=True,
-            text=True,
-            timeout=TIMEOUT_SEC,
+            ["claude", "-p", prompt],
+            capture_output=True, text=True, timeout=TIMEOUT_SEC,
         )
     except subprocess.TimeoutExpired:
         return {"error": f"claude CLI timed out after {TIMEOUT_SEC}s"}
-    except Exception as e:
-        return {"error": f"claude CLI failed: {e}"}
-
     if proc.returncode != 0:
         return {"error": f"claude exit {proc.returncode}: {proc.stderr[:500]}"}
-
     return {
         "answer": proc.stdout.strip(),
         "model": "claude-code-cli (local subscription)",
@@ -89,6 +88,23 @@ def solve(problem_text: str, course_dir: Path, topic: str | None = None) -> dict
         "output_tokens": len(proc.stdout) // 4,
         "cache_read": 0,
     }
+
+
+def solve(problem_text: str, course_dir: Path, topic: str | None = None) -> dict:
+    context = _gather_context(course_dir, topic)
+    prompt = (
+        f"Topic hint: {topic or 'general'}\n\n"
+        f"--- COURSE REFERENCE (use as needed; do not echo) ---\n"
+        f"{context}\n"
+        f"--- END REFERENCE ---\n\n"
+        f"Problem to solve:\n\n{problem_text}\n\n"
+        f"Walk me through it step by step."
+    )
+    backend = os.environ.get("USE_BACKEND", "gemini")
+    if backend == "claude":
+        full_prompt = f"{SYSTEM_PROMPT}\n\n{prompt}"
+        return _solve_via_claude(full_prompt)
+    return _solve_via_gemini(prompt)
 
 
 if __name__ == "__main__":

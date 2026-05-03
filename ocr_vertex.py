@@ -75,7 +75,7 @@ def render_pages(pdf: Path, work: Path) -> list[Path]:
     return out
 
 
-def transcribe_page(model, png: Path, limiter: RateLimiter, retries: int = 3) -> str:
+def transcribe_page(model, png: Path, limiter: RateLimiter, region: str = "", retries: int = 3) -> str:
     from vertexai.generative_models import Part
     img_bytes = png.read_bytes()
     image_part = Part.from_data(data=img_bytes, mime_type="image/png")
@@ -96,7 +96,7 @@ def transcribe_page(model, png: Path, limiter: RateLimiter, retries: int = 3) ->
                 time.sleep(min(60, 2 ** attempt * 5))
             else:
                 time.sleep(3)
-    return f"[vertex error after {retries} tries: {last_err[:200]}]"
+    return f"[vertex error after {retries} tries in {region}: {last_err[:200]}]"
 
 
 def shard_path(cache: Path, rel: str, page: int) -> Path:
@@ -118,13 +118,20 @@ def stitch_if_complete(cache: Path, rel: str, total_pages: int) -> bool:
     return True
 
 
-def process(course_dir: Path, project: str, location: str, model_name: str,
+def process(course_dir: Path, project: str, locations: list[str], model_name: str,
             limit: int | None, force: bool, categories: set[str] | None,
             match: str | None, workers: int, rpm: int) -> None:
     import vertexai
     from vertexai.generative_models import GenerativeModel
-    vertexai.init(project=project, location=location)
-    model = GenerativeModel(model_name)
+    # One model + rate limiter per region. Round-robin across them per work item.
+    region_models: dict[str, object] = {}
+    region_limiters: dict[str, RateLimiter] = {}
+    for loc in locations:
+        vertexai.init(project=project, location=loc)
+        region_models[loc] = GenerativeModel(model_name)
+        region_limiters[loc] = RateLimiter(rpm)
+    print(f"Initialized {len(locations)} regions: {', '.join(locations)} "
+          f"(combined rate ~{rpm * len(locations)} RPM)", flush=True)
 
     manifest_file = course_dir / "bundles" / "manifest.json"
     if not manifest_file.exists():
@@ -140,15 +147,16 @@ def process(course_dir: Path, project: str, location: str, model_name: str,
     if limit:
         targets = targets[:limit]
 
+    print(f"Scanning {len(targets)} target PDFs...", flush=True)
     work_items: list[tuple[str, Path, int, int]] = []
     pdf_pages: dict[str, list[Path]] = {}
-    for row in targets:
+    for idx, row in enumerate(targets, 1):
         rel = row["path"]
         final = cache / (rel.replace("/", "__") + ".txt")
         if final.exists() and not force:
             sample = final.read_text()[:500]
             if all(err not in sample for err in ("[vertex error", "[gemini error", "[claude error")) and len(sample) > 50:
-                print(f"  cached {rel}")
+                print(f"  [{idx}/{len(targets)}] cached {rel}", flush=True)
                 continue
         pdf = course_dir / rel
         if not pdf.exists():
@@ -157,8 +165,9 @@ def process(course_dir: Path, project: str, location: str, model_name: str,
         try:
             pages = render_pages(pdf, work)
         except Exception as e:
-            print(f"  render fail {rel}: {e}")
+            print(f"  [{idx}/{len(targets)}] render fail {rel}: {e}", flush=True)
             continue
+        print(f"  [{idx}/{len(targets)}] queued {rel} ({len(pages)} pages)", flush=True)
         pdf_pages[rel] = pages
         for i, png in enumerate(pages, 1):
             shard = shard_path(cache, rel, i)
@@ -168,25 +177,33 @@ def process(course_dir: Path, project: str, location: str, model_name: str,
                     continue
             work_items.append((rel, png, i, len(pages)))
 
+    combined_rpm = rpm * len(locations)
     print(f"\nTranscribing {len(work_items)} pages from {len(pdf_pages)} PDFs "
-          f"using {model_name} on Vertex AI ({location}), {workers} workers @ {rpm} RPM cap...")
-    print(f"Estimated cost: ~${0.007 * len(work_items):.2f}")
+          f"using {model_name} across {len(locations)} regions, "
+          f"{workers} workers @ {combined_rpm} RPM cap...", flush=True)
+    print(f"Estimated cost: ~${0.007 * len(work_items):.2f}", flush=True)
+    if not work_items:
+        print("Nothing to do.", flush=True)
+        return
 
-    limiter = RateLimiter(rpm)
     t_start = time.time()
     completed = 0
     failed = 0
 
-    def task(item):
+    def task(item_with_region):
+        item, region = item_with_region
         rel, png, page_num, total = item
         t0 = time.time()
-        text = transcribe_page(model, png, limiter)
-        return rel, png, page_num, total, text, time.time() - t0
+        text = transcribe_page(region_models[region], png, region_limiters[region], region=region)
+        return rel, png, page_num, total, text, time.time() - t0, region
+
+    # Round-robin assign each work item to a region
+    assigned = [(it, locations[i % len(locations)]) for i, it in enumerate(work_items)]
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        futures = [ex.submit(task, it) for it in work_items]
+        futures = [ex.submit(task, ar) for ar in assigned]
         for fut in as_completed(futures):
-            rel, png, page_num, total, text, dt = fut.result()
+            rel, png, page_num, total, text, dt, region = fut.result()
             completed += 1
             ok = text and "[vertex error" not in text and len(text) > 50
             shard = shard_path(cache, rel, page_num)
@@ -199,8 +216,8 @@ def process(course_dir: Path, project: str, location: str, model_name: str,
             avg = (time.time() - t_start) / completed
             eta = avg * (len(work_items) - completed)
             tag = "✓" if ok else "✗"
-            print(f"  {tag} [{completed}/{len(work_items)}] {rel} p{page_num} "
-                  f"({len(text)}c, {dt:.1f}s) — ETA {eta/60:.1f}m, failed={failed}")
+            print(f"  {tag} [{completed}/{len(work_items)}] [{region}] {rel} p{page_num} "
+                  f"({len(text)}c, {dt:.1f}s) — ETA {eta/60:.1f}m, failed={failed}", flush=True)
 
     print(f"\nDone. {completed - failed}/{completed} pages transcribed in "
           f"{(time.time()-t_start)/60:.1f}m. failed={failed}")
@@ -212,7 +229,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--course-dir", required=True)
     ap.add_argument("--project", required=True, help="GCP project id")
-    ap.add_argument("--location", default="us-central1")
+    ap.add_argument("--locations", default="us-central1",
+                    help="comma-separated regions (e.g. us-central1,us-east5,us-west4)")
     ap.add_argument("--model", default="gemini-2.5-pro")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--force", action="store_true")
@@ -225,7 +243,8 @@ def main() -> int:
     if not cdir.is_dir():
         sys.exit(f"Not a directory: {cdir}")
     cats = set(args.categories.split(",")) if args.categories else None
-    process(cdir, args.project, args.location, args.model, args.limit, args.force,
+    locations = [l.strip() for l in args.locations.split(",") if l.strip()]
+    process(cdir, args.project, locations, args.model, args.limit, args.force,
             cats, args.match, args.workers, args.rpm)
     return 0
 

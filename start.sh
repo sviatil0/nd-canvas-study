@@ -44,7 +44,12 @@ cmd_ui() {
     cmd_open
     return 0
   fi
-  echo "Starting Django UI on http://127.0.0.1:$PORT"
+  : "${USE_BACKEND:=gemini}"
+  : "${GCP_PROJECT:=nd-canvas-ocr-1777818991}"
+  : "${GCP_LOCATIONS:=us-central1,us-east5,us-west4}"
+  : "${GEMINI_MODEL:=gemini-2.5-pro}"
+  export USE_BACKEND GCP_PROJECT GCP_LOCATIONS GEMINI_MODEL
+  echo "Starting Django UI on http://127.0.0.1:$PORT (backend=$USE_BACKEND model=$GEMINI_MODEL)"
   nohup python manage.py runserver "$PORT" >/tmp/ndcanvas-ui.log 2>&1 &
   echo $! > "$UI_PIDFILE"
   sleep 2

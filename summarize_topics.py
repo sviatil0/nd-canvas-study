@@ -86,6 +86,7 @@ def gather_context(course_dir: Path, topic: str, max_chars: int = 30000) -> str:
 
 
 def summarize_one(course_dir: Path, topic: str) -> str:
+    import os
     info = GRAPH.get(topic)
     if not info:
         return f"# {topic}\n\nUnknown topic."
@@ -96,6 +97,13 @@ def summarize_one(course_dir: Path, topic: str) -> str:
         prereq_keys=", ".join(prereqs_of(topic)) or "(none)",
         context=context,
     )
+    backend = os.environ.get("USE_BACKEND", "gemini")
+    if backend == "gemini":
+        try:
+            from gemini_client import generate
+            return generate(prompt, max_output_tokens=2048)
+        except Exception as e:
+            return f"# {info['label']}\n\nGemini generation failed: {e}"
     proc = subprocess.run(
         [CLAUDE, "-p", prompt],
         capture_output=True, text=True, timeout=TIMEOUT,

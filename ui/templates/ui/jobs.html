@@ -67,15 +67,32 @@ function renderJobs(jobs) {
     const stats = document.createElement('div');
     stats.className = 'd-flex justify-content-between mb-2';
     const left2 = document.createElement('span');
-    left2.textContent = j.done + ' / ' + j.total + ' done · ' + j.failed + ' failed';
+    left2.textContent = j.done + ' / ' + j.total + ' done · ' + j.failed + ' failed · ' + j.remaining + ' remaining';
     stats.appendChild(left2);
     const right2 = document.createElement('span');
     right2.className = 'text-muted';
-    let etaTxt = j.eta_min !== null && j.eta_min !== undefined ? 'ETA ' + j.eta_min.toFixed(1) + 'm' : '';
+    let etaTxt = j.eta_min ? 'ETA ' + j.eta_min.toFixed(1) + 'm' : 'ETA —';
     if (j.cost_est) etaTxt += '  ·  est cost $' + j.cost_est.toFixed(2);
     right2.textContent = etaTxt;
     stats.appendChild(right2);
     body.appendChild(stats);
+
+    const meta = document.createElement('div');
+    meta.className = 'd-flex flex-wrap gap-2 mb-2 small';
+    const items = [];
+    if (j.model)         items.push(['model',       j.model]);
+    if (j.rpm)           items.push(['rate cap',    j.rpm + ' RPM']);
+    if (j.workers)       items.push(['workers',     String(j.workers)]);
+    if (j.avg_page_s)    items.push(['avg/page',    j.avg_page_s + 's']);
+    if (j.rpm_floor_min) items.push(['rate floor',  j.rpm_floor_min + 'm']);
+    if (j.observed_min)  items.push(['observed',    j.observed_min + 'm']);
+    items.forEach(([k, v]) => {
+      const b = document.createElement('span');
+      b.className = 'badge bg-light text-dark border';
+      b.textContent = k + ': ' + v;
+      meta.appendChild(b);
+    });
+    body.appendChild(meta);
 
     const bar = document.createElement('div');
     bar.className = 'progress mb-3';
