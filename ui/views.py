@@ -1116,6 +1116,7 @@ def jobs_status(request, cid: int):
         ("claude", "/tmp/ocr_claude_full.log"),
         ("gemini", "/tmp/ocr_gemini_full.log"),
         ("tesseract", "/tmp/ocr_tesseract_full.log"),
+        ("summaries", "/tmp/summaries.log"),
     ]
     for name, path in log_files:
         p = Path(path)
@@ -1125,8 +1126,8 @@ def jobs_status(request, cid: int):
             text = p.read_text()
         except Exception:
             continue
-        total_match = re.search(r"Transcribing (\d+) pages", text)
-        total = int(total_match.group(1)) if total_match else 0
+        total_match = re.search(r"Transcribing (\d+) pages|Generating (\d+) topic summaries", text)
+        total = int(total_match.group(1) or total_match.group(2)) if total_match else 0
         done = len(re.findall(r"^\s*✓ \[", text, re.M))
         failed = len(re.findall(r"^\s*✗ \[", text, re.M))
         cost_match = re.search(r"Estimated cost: ~\$([\d.]+)", text)
