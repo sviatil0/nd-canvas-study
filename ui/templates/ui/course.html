@@ -1,0 +1,77 @@
+{% extends "ui/base.html" %}
+{% block title %}{{ course.name|default:cid }}{% endblock %}
+{% block content %}
+<a class="btn btn-sm btn-outline-secondary mb-3" href="{% url 'ui:index' %}">&larr; back</a>
+<h2>{{ course.name|default:cid }}</h2>
+<p class="text-muted">id <code>{{ cid }}</code> · {{ course.course_code|default:"" }} · {{ course.term.name|default:"" }}</p>
+
+<div class="row g-3 mb-4">
+  <div class="col">
+    <form method="post" action="{% url 'ui:sync_course' cid %}">{% csrf_token %}
+      <button class="btn btn-secondary w-100">Re-sync from Canvas</button>
+    </form>
+  </div>
+  <div class="col">
+    <form method="post" action="{% url 'ui:build_bundle' cid %}">{% csrf_token %}
+      <button class="btn btn-primary w-100">Build LLM bundles</button>
+    </form>
+  </div>
+  <div class="col">
+    <form method="post" action="{% url 'ui:analyze_course' cid %}">{% csrf_token %}
+      <button class="btn btn-success w-100">Run gap analysis</button>
+    </form>
+  </div>
+</div>
+
+{% if have_gap %}
+<div class="card mb-4">
+  <div class="card-body">
+    <h5 class="card-title">Top under-prepared topics (exam vs HW/in-class)</h5>
+    <table class="table table-sm">
+      <thead><tr><th>Topic</th><th>Exam hits</th><th>Prep hits</th><th>Gap (pp)</th><th>Ratio</th></tr></thead>
+      <tbody>
+      {% for r in gap_top %}
+        <tr>
+          <td><strong>{{ r.topic }}</strong></td>
+          <td>{{ r.exam_hits }}</td>
+          <td>{{ r.prep_hits }}</td>
+          <td>{{ r.share_gap_pp }}</td>
+          <td>{{ r.exam_to_prep_ratio }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if bundles %}
+<div class="card mb-4">
+  <div class="card-body">
+    <h5 class="card-title">LLM-injectable bundles</h5>
+    <ul class="list-group">
+      {% for b in bundles %}
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          <a href="{% url 'ui:view_bundle' cid b.cat %}" target="_blank">{{ b.cat }}.md</a>
+          <span class="badge bg-secondary">{{ b.size }} B</span>
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endif %}
+
+<div class="card mb-4">
+  <div class="card-body">
+    <h5 class="card-title">Files ({{ files|length }})</h5>
+    <ul class="list-group" style="max-height:50vh; overflow:auto;">
+      {% for f in files %}
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          <a href="{% url 'ui:serve_file' cid f.rel %}" target="_blank">{{ f.rel }}</a>
+          <span class="badge bg-light text-dark">{{ f.size }} B</span>
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endblock %}
