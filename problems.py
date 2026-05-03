@@ -25,6 +25,32 @@ SUBPART = re.compile(r"^\s*\([a-h]\)\s+", re.I | re.M)
 EXAM_CATEGORIES = {"exams", "exam_solutions", "practice"}
 PREP_CATEGORIES = {"homeworks", "hw_keys", "in_class"}
 
+LOGISTICS_FILE_HINTS = ("details", "logistics", "info-", "syllab", "schedule")
+LOGISTICS_PHRASES = (
+    "dear ", "syllabus", "office hours", "academic integrity",
+    "make-up", "honor code", "policy", "report to ", "you must submit",
+    "please arrive", "no calculator", "bring your", "exam location",
+)
+PROBLEM_SIGNALS = (
+    "?", "=", "compute", "calculate", "find", "test", "determine",
+    "estimate", "construct", "what is", "p-value", "interval",
+    " a.", " b.", " c.", " d.",
+)
+
+
+def is_logistics_file(rel_path: str) -> bool:
+    name = rel_path.lower()
+    return any(h in name for h in LOGISTICS_FILE_HINTS)
+
+
+def looks_like_problem(stem: str) -> bool:
+    s = stem.lower()
+    if any(phrase in s for phrase in LOGISTICS_PHRASES):
+        return False
+    if not any(sig in s for sig in PROBLEM_SIGNALS):
+        return False
+    return True
+
 
 def topic_hits(text: str) -> dict[str, int]:
     out: dict[str, int] = {}
@@ -92,8 +118,11 @@ def build_study_plan(course_dir: Path) -> None:
     # Walk exam material, split into problems, classify
     by_topic: dict[str, list[dict]] = defaultdict(list)
     for p in exam_pdfs:
+        rel = str(p.relative_to(course_dir))
+        if is_logistics_file(rel):
+            print(f"  skipping logistics file: {rel}")
+            continue
         pages = extract_pdf_pages(p)
-        # Track page numbers when splitting joined text.
         joined = ""
         page_breaks = []
         for i, pg in enumerate(pages):
@@ -103,15 +132,16 @@ def build_study_plan(course_dir: Path) -> None:
             topic = classify_problem(body)
             if not topic:
                 continue
-            # find page number of body start
+            stem = re.sub(r"\s+", " ", body[:280]).strip()
+            if not looks_like_problem(stem):
+                continue
             offset = joined.find(body)
             page = next(
                 (pn for off, pn in reversed(page_breaks) if off <= offset),
                 1,
             )
-            stem = re.sub(r"\s+", " ", body[:280]).strip()
             by_topic[topic].append({
-                "source": str(p.relative_to(course_dir)),
+                "source": rel,
                 "page": page,
                 "problem": num,
                 "stem": stem,
