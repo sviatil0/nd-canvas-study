@@ -1,0 +1,139 @@
+{% extends "ui/base.html" %}
+{% block title %}Sync · {{ cid }}{% endblock %}
+{% block content %}
+<a class="btn btn-sm btn-outline-secondary mb-3" href="{% url 'ui:course_detail' cid %}">&larr; back</a>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2>Canvas sync</h2>
+  <div class="d-flex gap-2 align-items-center">
+    <span id="status-badge" class="badge bg-secondary">loading…</span>
+    <form method="post" action="{% url 'ui:sync_course' cid %}" class="d-inline">{% csrf_token %}
+      <button class="btn btn-sm btn-primary">Re-sync now</button>
+    </form>
+  </div>
+</div>
+
+<div id="overall-card" class="card mb-3">
+  <div class="card-body">
+    <div class="d-flex justify-content-between mb-1">
+      <strong>Overall</strong>
+      <span id="overall-stats" class="text-muted small"></span>
+    </div>
+    <div class="progress" style="height:14px;">
+      <div id="overall-bar" class="progress-bar bg-success" style="width:0%;"></div>
+    </div>
+  </div>
+</div>
+
+<div id="steps-container"></div>
+
+<div class="card mt-4">
+  <div class="card-body">
+    <h5 class="card-title">Latest assets <small class="text-muted">(newest first)</small></h5>
+    <input class="form-control form-control-sm mb-2" id="asset-filter" placeholder="filter by source / name / status">
+    <div id="assets" style="max-height:60vh; overflow:auto;" class="small font-monospace"></div>
+  </div>
+</div>
+
+<script>
+let lastData = null;
+
+async function refresh() {
+  try {
+    const r = await fetch("{% url 'ui:sync_status' cid %}");
+    if (r.status === 404) {
+      document.getElementById('status-badge').textContent = 'no sync yet';
+      document.getElementById('status-badge').className = 'badge bg-secondary';
+      return;
+    }
+    const data = await r.json();
+    lastData = data;
+    render(data);
+  } catch (e) {
+    document.getElementById('status-badge').textContent = 'error: ' + e;
+  }
+}
+
+function render(d) {
+  const badge = document.getElementById('status-badge');
+  if (d.finished) {
+    badge.textContent = '● done';
+    badge.className = 'badge bg-success';
+  } else {
+    badge.textContent = '◴ running';
+    badge.className = 'badge bg-primary';
+  }
+
+  const steps = d.steps || {};
+  const totalAll = Object.values(steps).reduce((a, s) => a + (s.total || 0), 0);
+  const doneAll = Object.values(steps).reduce((a, s) => a + (s.done || 0) + (s.failed || 0), 0);
+  const pct = totalAll ? Math.round(100 * doneAll / totalAll) : 0;
+  document.getElementById('overall-stats').textContent =
+    doneAll + ' / ' + totalAll + '  (' + pct + '%)  ·  errors: ' + (d.errors || []).length;
+  document.getElementById('overall-bar').style.width = pct + '%';
+
+  const sc = document.getElementById('steps-container');
+  sc.replaceChildren();
+  Object.entries(steps).forEach(([name, s]) => {
+    const card = document.createElement('div');
+    card.className = 'card mb-2 ' + (s.finished ? 'border-success' : '');
+    const body = document.createElement('div');
+    body.className = 'card-body py-2';
+    const h = document.createElement('div');
+    h.className = 'd-flex justify-content-between mb-1';
+    const left = document.createElement('strong');
+    left.textContent = name;
+    h.appendChild(left);
+    const right = document.createElement('span');
+    right.className = 'small text-muted';
+    right.textContent = s.done + ' done · ' + s.failed + ' failed · ' + s.total + ' total'
+                       + (s.finished ? '  ✓' : '  …');
+    h.appendChild(right);
+    body.appendChild(h);
+    const bar = document.createElement('div');
+    bar.className = 'progress';
+    bar.style.height = '8px';
+    const inner = document.createElement('div');
+    const pctStep = s.total ? Math.round(100 * (s.done + s.failed) / s.total) : (s.finished ? 100 : 0);
+    inner.className = 'progress-bar ' + (s.failed ? 'bg-warning' : 'bg-success');
+    inner.style.width = pctStep + '%';
+    bar.appendChild(inner);
+    body.appendChild(bar);
+    card.appendChild(body);
+    sc.appendChild(card);
+  });
+
+  renderAssets();
+}
+
+function renderAssets() {
+  if (!lastData) return;
+  const filt = document.getElementById('asset-filter').value.toLowerCase();
+  const list = (lastData.assets || []).slice().reverse();
+  const c = document.getElementById('assets');
+  c.replaceChildren();
+  list.forEach(a => {
+    const haystack = [a.kind, a.source, a.dest || '', a.note || '', a.status].join(' ').toLowerCase();
+    if (filt && !haystack.includes(filt)) return;
+    const row = document.createElement('div');
+    const colorMap = {
+      ok: 'text-success', cached: 'text-muted', skipped: 'text-muted',
+      fail: 'text-danger', meta_fail: 'text-danger', download_fail: 'text-danger',
+      no_url: 'text-warning',
+    };
+    row.className = colorMap[a.status] || '';
+    const sym = a.status === 'ok' ? '✓' : a.status === 'cached' ? '·' : a.status === 'skipped' ? '○' : '✗';
+    let line = sym + ' [' + a.kind + '] ' + a.source;
+    if (a.note) line += '  — ' + a.note;
+    if (a.size != null) line += '  (' + a.size + 'B)';
+    if (a.status !== 'ok' && a.status !== 'cached') line += '  [' + a.status + ']';
+    row.textContent = line;
+    c.appendChild(row);
+  });
+}
+
+document.getElementById('asset-filter').addEventListener('input', renderAssets);
+refresh();
+setInterval(refresh, 2000);
+</script>
+{% endblock %}

@@ -105,12 +105,14 @@ def sync_course(request, cid: int):
     args = [PYTHON, "download.py", "--course", str(cid)]
     if name:
         args += ["--name", name]
-    code, out = _run(args)
-    if code == 0:
-        messages.success(request, f"Synced course {cid}")
-    else:
-        messages.error(request, f"Sync failed: {out}")
-    return redirect("ui:course_detail", cid=cid)
+    subprocess.Popen(
+        args, cwd=ROOT,
+        stdout=open(f"/tmp/sync_run_{cid}.log", "w"),
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    messages.info(request, f"Sync started for course {cid}. Watch progress on the Sync page.")
+    return redirect("ui:sync_view", cid=cid)
 
 
 def _materials_for_topic(cdir: Path, topic: str) -> list[dict]:
@@ -625,6 +627,18 @@ def formulas(request, cid: int):
 
 def jobs_view(request, cid: int):
     return render(request, "ui/jobs.html", {"cid": cid})
+
+
+def sync_view(request, cid: int):
+    return render(request, "ui/sync.html", {"cid": cid})
+
+
+def sync_status(request, cid: int):
+    log = Path(f"/tmp/sync_log_{cid}.json")
+    if not log.exists():
+        return HttpResponse(json.dumps({"error": "no sync started"}),
+                            content_type="application/json", status=404)
+    return HttpResponse(log.read_text(), content_type="application/json")
 
 
 def jobs_status(request, cid: int):
