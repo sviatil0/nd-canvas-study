@@ -36,7 +36,13 @@ def categorize(name: str) -> str:
     return "other"
 
 
-def extract_pdf(path: Path) -> str:
+def extract_pdf(path: Path, course_dir: Path | None = None) -> str:
+    # Prefer OCR cache when available (much cleaner for scanned solutions)
+    if course_dir is not None:
+        rel = str(path.relative_to(course_dir))
+        ocr_file = course_dir / "_ocr" / (rel.replace("/", "__") + ".txt")
+        if ocr_file.exists():
+            return ocr_file.read_text()
     try:
         reader = PdfReader(str(path))
         parts = []
@@ -65,7 +71,7 @@ def build(course_dir: Path) -> None:
     for pdf in sorted(walk_pdfs(course_dir)):
         rel = pdf.relative_to(course_dir)
         cat = categorize(pdf.name)
-        text = extract_pdf(pdf)
+        text = extract_pdf(pdf, course_dir)
         manifest.append({
             "path": str(rel),
             "category": cat,

@@ -49,6 +49,16 @@ def load_text(path: Path) -> str:
     return path.read_text(errors="ignore")
 
 
+def load_with_ocr(course_dir: Path, name: str) -> str:
+    """Load bundle text but substitute OCR cache where available for cleaner topic counting."""
+    md = load_text(course_dir / "bundles" / f"{name}.md")
+    ocr_dir = course_dir / "_ocr"
+    if not ocr_dir.exists():
+        return md
+    extra = "\n".join(p.read_text(errors="ignore") for p in ocr_dir.glob("*.txt"))
+    return md + "\n" + extra
+
+
 def count_topics(text: str) -> Counter:
     c: Counter = Counter()
     for topic, aliases in TOPICS.items():

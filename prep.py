@@ -142,6 +142,10 @@ def main() -> int:
         sys.exit(f"Download dir for course {cid} not found.")
 
     if not args.skip_bundle:
+        # OCR scanned/handwritten exam PDFs first so bundles + analyze get clean text
+        run([PYTHON, "bundle.py", "--course-dir", str(cdir)])
+        run([PYTHON, "ocr.py", "--course-dir", str(cdir)], check=False)
+        # Re-bundle so OCR'd text replaces garbled pypdf output
         run([PYTHON, "bundle.py", "--course-dir", str(cdir)])
     if not args.skip_analyze:
         run([PYTHON, "analyze.py", "--course-dir", str(cdir)])

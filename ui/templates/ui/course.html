@@ -5,7 +5,7 @@
 <h2>{{ course.name|default:cid }}</h2>
 <p class="text-muted">id <code>{{ cid }}</code> · {{ course.course_code|default:"" }} · {{ course.term.name|default:"" }}</p>
 
-<div class="row g-3 mb-4">
+<div class="row row-cols-2 row-cols-md-3 row-cols-lg-6 g-2 mb-4">
   <div class="col">
     <form method="post" action="{% url 'ui:sync_course' cid %}">{% csrf_token %}
       <button class="btn btn-secondary w-100">Re-sync from Canvas</button>
@@ -65,8 +65,9 @@
 <div class="card mb-4">
   <div class="card-body">
     <h5 class="card-title">All exam topics, sorted by under-preparation (highest gap first)</h5>
+    <div class="table-responsive">
     <table class="table table-sm align-middle">
-      <thead><tr><th>Topic</th><th>Exam</th><th>Prep</th><th>Gap</th><th>Progress</th><th>Study materials</th></tr></thead>
+      <thead><tr><th>Topic</th><th class="text-end">Exam</th><th class="text-end">Prep</th><th class="text-end">Gap</th><th>Progress</th><th>Study materials</th></tr></thead>
       <tbody>
       {% for r in gap_top %}
         <tr>
@@ -101,6 +102,7 @@
       {% endfor %}
       </tbody>
     </table>
+    </div>
     <small class="text-muted">
       Click topic name → concept summary + prereqs + problems.
       Badges: <span class="badge bg-info text-dark">in_class</span> notes,

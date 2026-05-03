@@ -60,12 +60,12 @@
 </head>
 <body class="bg-light">
 <nav class="navbar navbar-dark bg-dark mb-3">
-  <div class="container">
-    <a class="navbar-brand" href="{% url 'ui:index' %}">ND Canvas Study Tool</a>
-    <a class="btn btn-sm btn-outline-light" href="{% url 'ui:auth_check' %}" target="_blank">auth check</a>
+  <div class="container-fluid px-3">
+    <a class="navbar-brand" href="{% url 'ui:index' %}">ND Canvas Study</a>
+    <a class="btn btn-sm btn-outline-light" href="{% url 'ui:auth_check' %}" target="_blank">auth</a>
   </div>
 </nav>
-<main class="container">
+<main class="container-fluid px-3" style="max-width:1280px;">
   {% if messages %}
     {% for m in messages %}
       <div class="alert alert-{{ m.tags|default:'info' }}">{{ m }}</div>

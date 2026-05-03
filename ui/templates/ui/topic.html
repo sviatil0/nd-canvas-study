@@ -186,22 +186,41 @@ const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.
 {% endif %}
 
 {% for p in problems %}
-  <div class="card mb-4 problem-card {% if p.done %}border-success{% endif %}" id="p{{ forloop.counter }}" data-key="{{ p.key }}">
-    <div class="card-header d-flex justify-content-between align-items-center">
-      <div class="d-flex align-items-center gap-2">
-        <input class="form-check-input mt-0 done-toggle" type="checkbox"
-               data-key="{{ p.key }}" {% if p.done %}checked{% endif %}
-               title="Mark as solved">
-        <span class="badge bg-secondary">#{{ forloop.counter }}</span>
-        <a href="{% url 'ui:serve_file' cid p.source %}" target="_blank">{{ p.source }}</a>
-        · page {{ p.page }} · problem {{ p.problem }}
+  <div class="card mb-3 problem-card {% if p.done %}border-success{% endif %}" id="p{{ forloop.counter }}" data-key="{{ p.key }}">
+    <div class="card-header">
+      <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+        <div class="d-flex align-items-center gap-2 flex-wrap" style="min-width:0; flex:1 1 auto;">
+          <input class="form-check-input mt-0 done-toggle" type="checkbox"
+                 data-key="{{ p.key }}" {% if p.done %}checked{% endif %}
+                 title="Mark as solved">
+          <span class="badge bg-secondary">#{{ forloop.counter }}</span>
+          {% if p.category == 'practice' %}
+            <span class="badge bg-danger" title="From practice exam — high likelihood">practice</span>
+          {% elif p.category == 'exams' %}
+            <span class="badge bg-warning text-dark" title="From past exam">exam</span>
+          {% elif p.category == 'exam_solutions' %}
+            <span class="badge bg-warning text-dark" title="From past exam solutions">exam_sol</span>
+          {% elif p.category == 'hw_keys' %}
+            <span class="badge bg-success" title="From HW solution key">hw_key</span>
+          {% elif p.category == 'homeworks' %}
+            <span class="badge bg-info text-dark" title="From homework">hw</span>
+          {% elif p.category == 'in_class' %}
+            <span class="badge bg-light text-dark border" title="From in-class notes">in_class</span>
+          {% else %}
+            <span class="badge bg-secondary">{{ p.category }}</span>
+          {% endif %}
+          <small class="text-muted text-truncate" style="min-width:0;">
+            <a href="{% url 'ui:serve_file' cid p.source %}" target="_blank" class="text-muted">{{ p.source }}</a>
+            · p{{ p.page }} · #{{ p.problem }}
+          </small>
+        </div>
+        <button class="btn btn-sm btn-success solve-btn flex-shrink-0"
+                data-target="a{{ forloop.counter }}"
+                data-problem="{{ p.stem }}"
+                data-topic="{{ topic }}">
+          Solve
+        </button>
       </div>
-      <button class="btn btn-sm btn-success solve-btn"
-              data-target="a{{ forloop.counter }}"
-              data-problem="{{ p.stem }}"
-              data-topic="{{ topic }}">
-        Solve with LLM
-      </button>
     </div>
     <div class="card-body">
       <p class="mb-3"><strong>Stem:</strong> {{ p.stem }}…</p>

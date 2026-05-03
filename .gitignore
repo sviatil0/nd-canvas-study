@@ -9,5 +9,6 @@ db.sqlite3
 .DS_Store
 .ui.pid
 */_attempts/
+*/_ocr/
 */chroma/
 */_snippets/
