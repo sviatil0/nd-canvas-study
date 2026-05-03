@@ -1,10 +1,13 @@
 {% extends "ui/base.html" %}
-{% block title %}Jobs · {{ cid }}{% endblock %}
+{% block title %}OCR jobs · {{ cid }}{% endblock %}
 {% block content %}
 <a class="btn btn-sm btn-outline-secondary mb-3" href="{% url 'ui:course_detail' cid %}">&larr; back</a>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h2>Background jobs</h2>
+  <div>
+    <h2 class="mb-0">OCR jobs</h2>
+    <small class="text-muted">Live status of background OCR runs (Vertex / Claude / Gemini / Tesseract). For Canvas sync progress, see the <a href="{% url 'ui:sync_view' cid %}">Sync</a> page.</small>
+  </div>
   <span class="text-muted small" id="last-refresh">refreshing every 3s…</span>
 </div>
 
