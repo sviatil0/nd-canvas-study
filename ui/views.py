@@ -317,6 +317,21 @@ def topic_detail(request, cid: int, topic: str):
 def build_summary(request, cid: int, topic: str):
     cdir = _course_dir_for(cid)
     code, out = _run([PYTHON, "summarize_topics.py", "--course-dir", str(cdir), "--topic", topic, "--rebuild"])
+    if request.headers.get("X-Requested-With") == "fetch":
+        if code == 0:
+            summary_file = cdir / "bundles" / "topics" / f"{topic}.md"
+            md = summary_file.read_text() if summary_file.exists() else ""
+            sys.path.insert(0, str(ROOT))
+            from topic_graph import GRAPH
+            for key in GRAPH:
+                md = md.replace(
+                    f"TOPIC_LINK_PLACEHOLDER:{key}",
+                    reverse("ui:topic_detail", args=[cid, key]),
+                )
+            return HttpResponse(json.dumps({"ok": True, "markdown": md}),
+                                content_type="application/json")
+        return HttpResponse(json.dumps({"ok": False, "error": out[-1500:]}),
+                            content_type="application/json", status=500)
     if code == 0:
         messages.success(request, f"Summary generated for {topic}.")
     else:

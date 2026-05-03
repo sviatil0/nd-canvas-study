@@ -8,8 +8,11 @@
     <h2>{{ info.label|default:topic }}</h2>
     {% if info.ch %}<p class="text-muted">Chapter {{ info.ch }} · key <code>{{ topic }}</code></p>{% endif %}
   </div>
-  <form method="post" action="{% url 'ui:build_summary' cid topic %}">{% csrf_token %}
-    <button class="btn btn-sm btn-outline-primary">{% if have_summary %}Regenerate summary{% else %}Generate summary{% endif %}</button>
+  <form id="summary-form" method="post" action="{% url 'ui:build_summary' cid topic %}">{% csrf_token %}
+    <button class="btn btn-sm btn-outline-primary" id="summary-btn">
+      <span class="btn-label">{% if have_summary %}Regenerate summary{% else %}Generate summary{% endif %}</span>
+      <span class="spinner-border spinner-border-sm d-none" id="summary-spin" role="status"></span>
+    </button>
   </form>
 </div>
 
@@ -42,13 +45,24 @@
 </div>
 {% endif %}
 
-{% if have_summary %}
-<div class="card mb-4">
+<div class="card mb-4" id="summary-card" {% if not have_summary %}hidden{% endif %}>
   <div class="card-body">
     <div id="summary-md"></div>
     <template id="summary-src">{{ summary_md }}</template>
   </div>
 </div>
+<div class="alert alert-secondary" id="summary-empty" {% if have_summary %}hidden{% endif %}>
+  No concept summary yet. Click <strong>Generate summary</strong> above (uses local Claude, ~30s).
+</div>
+<div class="alert alert-info d-none" id="summary-loading">
+  <div class="d-flex align-items-center gap-2">
+    <div class="spinner-border spinner-border-sm" role="status"></div>
+    <div>Generating summary with local Claude… <span id="summary-elapsed">0</span>s elapsed.</div>
+  </div>
+  <small class="text-muted">Reads formula sheet + 6 in-class chunks. Usually 20–60s.</small>
+</div>
+<div class="alert alert-danger d-none" id="summary-error"></div>
+
 <div id="selection-toolbar" style="position:absolute; display:none; z-index:1000;" class="btn-group shadow">
   <button class="btn btn-sm btn-primary" id="sel-ask">Ask…</button>
   <button class="btn btn-sm btn-success" id="sel-expand">Add details</button>
@@ -163,10 +177,61 @@ const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.
     if (q && q.trim()) callFollowup('ask', q.trim());
   });
 })();
+
+// AJAX summary generation with live elapsed counter
+(function () {
+  const form = document.getElementById('summary-form');
+  if (!form) return;
+  const btn = document.getElementById('summary-btn');
+  const spin = document.getElementById('summary-spin');
+  const label = btn.querySelector('.btn-label');
+  const loading = document.getElementById('summary-loading');
+  const errBox = document.getElementById('summary-error');
+  const card = document.getElementById('summary-card');
+  const target = document.getElementById('summary-md');
+  const empty = document.getElementById('summary-empty');
+  const elapsedEl = document.getElementById('summary-elapsed');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    btn.disabled = true;
+    spin.classList.remove('d-none');
+    label.textContent = 'Generating…';
+    errBox.classList.add('d-none');
+    empty.hidden = true;
+    loading.classList.remove('d-none');
+    let t = 0;
+    elapsedEl.textContent = '0';
+    const tick = setInterval(() => { t++; elapsedEl.textContent = String(t); }, 1000);
+    try {
+      const r = await fetch(form.action, {
+        method: 'POST',
+        headers: {'X-CSRFToken': csrf, 'X-Requested-With': 'fetch'},
+      });
+      const data = await r.json();
+      if (!r.ok || !data.ok) {
+        errBox.textContent = 'Generation failed: ' + (data.error || r.status);
+        errBox.classList.remove('d-none');
+      } else {
+        card.hidden = false;
+        window.markedReady.then(() => {
+          window.renderMarkdownInto(target, data.markdown);
+          renderMathIn(target);
+        });
+        label.textContent = 'Regenerate summary';
+      }
+    } catch (err) {
+      errBox.textContent = 'Network error: ' + err;
+      errBox.classList.remove('d-none');
+    } finally {
+      clearInterval(tick);
+      loading.classList.add('d-none');
+      spin.classList.add('d-none');
+      btn.disabled = false;
+    }
+  });
+})();
 </script>
-{% else %}
-<div class="alert alert-secondary">No concept summary yet. Click <strong>Generate summary</strong> above (uses local Claude, ~30s).</div>
-{% endif %}
 
 <hr class="my-4">
 <h3>Problems from exam/practice material</h3>

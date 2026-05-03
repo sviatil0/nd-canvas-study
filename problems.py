@@ -20,7 +20,14 @@ from pypdf import PdfReader
 
 from analyze import TOPICS
 
-PROBLEM_HEAD = re.compile(r"^\s*(?:problem|question|q|#)?\s*(\d{1,2})[.\):]\s+", re.I | re.M)
+PROBLEM_HEAD = re.compile(
+    r"^\s*(?:problem|question|q|exercise|ex|#)?\s*(\d{1,2})[.\):]\s+",
+    re.I | re.M,
+)
+PROBLEM_HEAD_LOOSE = re.compile(
+    r"(?:^|\n)\s*(?:problem|question|q|exercise|ex|#)?\s*(\d{1,2})[.\):]\s+(?=[A-Z(])",
+    re.I,
+)
 SUBPART = re.compile(r"^\s*\([a-h]\)\s+", re.I | re.M)
 EXAM_CATEGORIES = {"exams", "exam_solutions", "practice"}
 PREP_CATEGORIES = {"homeworks", "hw_keys", "in_class"}
@@ -34,8 +41,51 @@ LOGISTICS_PHRASES = (
 PROBLEM_SIGNALS = (
     "?", "=", "compute", "calculate", "find", "test", "determine",
     "estimate", "construct", "what is", "p-value", "interval",
-    " a.", " b.", " c.", " d.",
+    " a.", " b.", " c.", " d.", "(5 points)", "(10 points)", "(1 point)",
+    "(2 points)", "(3 points)", "(4 points)", "(6 points)", "(8 points)",
+    "data on", "sample of", "frequencies", "table below", "consider",
+    "suppose", "assume", "given that", "show that", "verify",
+    "hypothesis", "anova", "regression", "distribution", "probability",
 )
+
+
+CHAPTER_TO_TOPIC: dict[int, list[str]] = {
+    1: ["descriptive_statistics"],
+    2: ["probability_basics", "conditional_probability", "independence"],
+    3: ["discrete_distributions", "expected_value"],
+    4: ["continuous_distributions"],
+    5: ["joint_distributions"],
+    6: ["point_estimation", "sampling_distributions"],
+    7: ["confidence_intervals"],
+    8: ["hypothesis_testing", "t_test", "z_test"],
+    9: ["two_sample"],
+    10: ["anova"],
+    12: ["regression_simple", "correlation"],
+    13: ["regression_multiple", "regression_assumptions"],
+    14: ["categorical_data", "chi_squared", "nonparametric"],
+}
+
+
+def chapter_from_path(rel_path: str) -> int | None:
+    m = re.search(r"chapter[s]?-(\d+)", rel_path.lower())
+    return int(m.group(1)) if m else None
+
+
+def classify_with_chapter_bias(body: str, rel_path: str) -> str | None:
+    """Classify, but only consider topics whose chapter matches the file's chapter when available."""
+    hits = topic_hits(body)
+    if not hits:
+        return None
+    ch = chapter_from_path(rel_path)
+    if ch is None:
+        return max(hits, key=hits.get)
+    allowed = set(CHAPTER_TO_TOPIC.get(ch, []))
+    if not allowed:
+        return max(hits, key=hits.get)
+    constrained = {t: c for t, c in hits.items() if t in allowed}
+    if constrained:
+        return max(constrained, key=constrained.get)
+    return max(hits, key=hits.get)
 
 
 def is_logistics_file(rel_path: str) -> bool:
@@ -65,6 +115,9 @@ def split_problems(text: str) -> list[tuple[int, str]]:
     """Split a PDF text dump into (problem_num, body) tuples."""
     matches = list(PROBLEM_HEAD.finditer(text))
     if not matches:
+        # Try loose pattern (any-line numbered)
+        matches = list(PROBLEM_HEAD_LOOSE.finditer(text))
+    if not matches:
         return [(1, text)]
     problems = []
     for i, m in enumerate(matches):
@@ -72,9 +125,19 @@ def split_problems(text: str) -> list[tuple[int, str]]:
         start = m.start()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
         body = text[start:end].strip()
-        if 30 < len(body) < 6000:  # filter junk / headers
+        if 30 < len(body) < 6000:
             problems.append((num, body))
     return problems
+
+
+def split_pages_as_problems(pages: list[str]) -> list[tuple[int, str]]:
+    """Fallback: treat each page as one problem (for handwritten/scan-only PDFs)."""
+    out = []
+    for i, p in enumerate(pages):
+        body = p.strip()
+        if 60 < len(body) < 6000:
+            out.append((i + 1, body))
+    return out
 
 
 def extract_pdf_pages(path: Path, course_dir: Path | None = None) -> list[str]:
@@ -145,18 +208,24 @@ def build_study_plan(course_dir: Path) -> None:
             for i, pg in enumerate(pages):
                 page_breaks.append((len(joined), i + 1))
                 joined += "\n" + pg + "\n"
-            for num, body in split_problems(joined):
-                topic = classify_problem(body)
+
+            splits = split_problems(joined)
+            # Fall back to per-page if splitter found only 1 chunk == whole doc
+            if len(splits) <= 1 and len(pages) > 1:
+                splits = split_pages_as_problems(pages)
+
+            for num, body in splits:
+                topic = classify_with_chapter_bias(body, rel)
                 if not topic:
                     continue
                 stem = re.sub(r"\s+", " ", body[:320]).strip()
                 if not looks_like_problem(stem):
                     continue
-                offset = joined.find(body)
+                offset = joined.find(body[:60]) if body else -1
                 page = next(
                     (pn for off, pn in reversed(page_breaks) if off <= offset),
                     1,
-                )
+                ) if offset >= 0 else num
                 by_topic[topic].append({
                     "source": rel,
                     "category": cat,

@@ -21,6 +21,10 @@ from pypdf import PdfReader
 import pytesseract
 
 EXAM_CATEGORIES = {"exams", "exam_solutions", "practice"}
+ALL_PROBLEM_CATEGORIES = {
+    "exams", "exam_solutions", "practice",
+    "homeworks", "hw_keys", "in_class",
+}
 LETTER_RATIO_MIN = 0.55
 PAGE_SEP = "\n\n--- page {n} ---\n\n"
 
@@ -59,7 +63,7 @@ def process(course_dir: Path, force: bool = False) -> None:
     cache.mkdir(exist_ok=True)
 
     for row in manifest:
-        if row["category"] not in EXAM_CATEGORIES:
+        if row["category"] not in ALL_PROBLEM_CATEGORIES:
             continue
         rel = row["path"]
         pdf = course_dir / rel
