@@ -46,10 +46,18 @@
 
 <div id="cal-dedup" class="card mb-3 d-none">
   <div class="card-body">
-    <h6 class="card-title">Possible duplicate events on your calendar</h6>
-    <div id="cal-dedup-list" class="small font-monospace"></div>
-    <small class="text-muted">Items already created by this tool show "[ours]". The pusher
-      uses idempotent tags — re-running won't re-create those.</small>
+    <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+      <h6 class="card-title mb-0">Possible duplicate events on your calendar</h6>
+      <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-outline-secondary" id="cal-dedup-select-foreign">Select all foreign</button>
+        <button class="btn btn-sm btn-outline-secondary" id="cal-dedup-clear">Clear</button>
+        <button class="btn btn-sm btn-danger" id="cal-dedup-delete">Delete checked</button>
+      </div>
+    </div>
+    <div id="cal-dedup-list" class="small"></div>
+    <small class="text-muted d-block mt-2">Tick boxes for the events you want REMOVED from your
+      calendar, then click Delete. "[ours]" rows are events this tool created (re-pushing
+      will update, not duplicate).</small>
   </div>
 </div>
 
@@ -200,17 +208,55 @@ document.getElementById('cal-dedup-btn').addEventListener('click', async () => {
     if (!d.matches.length) { list.textContent = '✓ No same-date events found.'; return; }
     d.matches.forEach(m => {
       const head = document.createElement('div');
-      head.className = 'fw-bold mt-2';
+      head.className = 'fw-bold mt-3 small';
       head.textContent = m.emoji + '  ' + m.date + '  →  [' + m.kind + '] ' + m.title;
       list.appendChild(head);
       m.existing.forEach(ex => {
         const row = document.createElement('div');
-        row.className = 'ps-3 ' + (ex.ours ? 'text-success' : 'text-warning');
-        row.textContent = (ex.ours ? '[ours, will update] ' : '[exists on calendar] ') + ex.summary;
+        row.className = 'd-flex align-items-center gap-2 ps-3 small';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'form-check-input dedup-cb';
+        cb.dataset.eventId = ex.id;
+        cb.dataset.ours = ex.ours ? '1' : '0';
+        const tag = document.createElement('span');
+        tag.className = 'badge ' + (ex.ours ? 'bg-success' : 'bg-warning text-dark');
+        tag.textContent = ex.ours ? 'ours' : 'foreign';
+        const text = document.createElement('span');
+        text.textContent = ex.summary;
+        row.append(cb, tag, text);
         list.appendChild(row);
       });
     });
   } catch (e) { list.textContent = 'Failed: ' + e; }
+});
+
+document.getElementById('cal-dedup-select-foreign').addEventListener('click', () => {
+  document.querySelectorAll('.dedup-cb').forEach(cb => {
+    cb.checked = (cb.dataset.ours === '0');
+  });
+});
+document.getElementById('cal-dedup-clear').addEventListener('click', () => {
+  document.querySelectorAll('.dedup-cb').forEach(cb => cb.checked = false);
+});
+document.getElementById('cal-dedup-delete').addEventListener('click', async () => {
+  const ids = Array.from(document.querySelectorAll('.dedup-cb'))
+    .filter(cb => cb.checked).map(cb => cb.dataset.eventId);
+  if (!ids.length) { alert('Tick at least one checkbox first.'); return; }
+  if (!confirm(`Delete ${ids.length} event(s) from calendar? Cannot undo.`)) return;
+  const calId = document.querySelector('input[name=calendar_id]').value || 'primary';
+  const fd = new FormData();
+  fd.append('calendar_id', calId);
+  fd.append('event_ids', JSON.stringify(ids));
+  const r = await fetch("{% url 'ui:calendar_delete_events' cid %}", {
+    method: 'POST', headers: {'X-CSRFToken': csrf}, body: fd,
+  });
+  const d = await r.json();
+  if (d.error) alert('Delete failed: ' + d.error);
+  else {
+    alert(`Deleted ${d.deleted} event(s)` + (d.failed?.length ? `, ${d.failed.length} failed` : ''));
+    document.getElementById('cal-dedup-btn').click();  // refresh list
+  }
 });
 
 document.getElementById('cal-preview-btn').addEventListener('click', async () => {

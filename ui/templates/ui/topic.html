@@ -259,9 +259,13 @@ const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.
         </div>
         <div class="row g-2">
           <div class="col-md-6">
-            <strong class="small text-muted">Original page</strong>
-            <div class="mat-image-wrap border rounded" style="overflow:auto; max-height:80vh; position:relative;">
-              <img class="mat-image img-fluid" loading="lazy" alt="page snippet">
+            <div class="d-flex justify-content-between align-items-center">
+              <strong class="small text-muted">Original page</strong>
+              <small class="text-muted">drag on image to ask Gemini about region</small>
+            </div>
+            <div class="mat-image-wrap border rounded" style="overflow:auto; max-height:80vh; position:relative; user-select:none;">
+              <img class="mat-image img-fluid" loading="lazy" alt="page snippet" draggable="false" style="display:block;">
+              <div class="mat-region-overlay" style="position:absolute; pointer-events:none; border:2px dashed #0d6efd; background:rgba(13,110,253,0.15); display:none;"></div>
             </div>
           </div>
           <div class="col-md-6">
@@ -635,6 +639,112 @@ document.querySelectorAll('.mat-next').forEach(b => {
     const item = b.closest('.accordion-item');
     const rel = item.querySelector('.accordion-button').dataset.matRel;
     loadMaterial(item, rel, (matState[rel]?.page || 1) + 1);
+  });
+});
+
+// Drag-to-select region on PDF image → ask Gemini
+function setupRegionSelect(item) {
+  const wrap = item.querySelector('.mat-image-wrap');
+  if (!wrap || wrap.dataset.regionInit) return;
+  wrap.dataset.regionInit = '1';
+  const img = wrap.querySelector('.mat-image');
+  const overlay = wrap.querySelector('.mat-region-overlay');
+  const answerBox = item.querySelector('.mat-answer');
+  let startX, startY, dragging = false;
+
+  wrap.addEventListener('mousedown', (e) => {
+    if (e.target !== img) return;
+    const rect = wrap.getBoundingClientRect();
+    startX = e.clientX - rect.left + wrap.scrollLeft;
+    startY = e.clientY - rect.top + wrap.scrollTop;
+    overlay.style.left = startX + 'px';
+    overlay.style.top = startY + 'px';
+    overlay.style.width = '0px';
+    overlay.style.height = '0px';
+    overlay.style.display = '';
+    dragging = true;
+    e.preventDefault();
+  });
+  wrap.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const rect = wrap.getBoundingClientRect();
+    const x = e.clientX - rect.left + wrap.scrollLeft;
+    const y = e.clientY - rect.top + wrap.scrollTop;
+    overlay.style.left = Math.min(x, startX) + 'px';
+    overlay.style.top = Math.min(y, startY) + 'px';
+    overlay.style.width = Math.abs(x - startX) + 'px';
+    overlay.style.height = Math.abs(y - startY) + 'px';
+  });
+  wrap.addEventListener('mouseup', async (e) => {
+    if (!dragging) return;
+    dragging = false;
+    const w = parseFloat(overlay.style.width);
+    const h = parseFloat(overlay.style.height);
+    if (w < 20 || h < 20) {
+      overlay.style.display = 'none';
+      return;
+    }
+    // Compute crop in image-natural coordinates
+    const sx = parseFloat(overlay.style.left);
+    const sy = parseFloat(overlay.style.top);
+    const scaleX = img.naturalWidth / img.clientWidth;
+    const scaleY = img.naturalHeight / img.clientHeight;
+    const cropX = sx * scaleX;
+    const cropY = sy * scaleY;
+    const cropW = w * scaleX;
+    const cropH = h * scaleY;
+
+    const q = window.prompt('Question about this region (blank = "Explain this"):', '');
+    if (q === null) { overlay.style.display = 'none'; return; }
+    answerBox.replaceChildren();
+    setStatus(answerBox, 'info', 'Asking Gemini about the selected region…');
+
+    // Crop via canvas
+    const canvas = document.createElement('canvas');
+    canvas.width = cropW; canvas.height = cropH;
+    const ctx = canvas.getContext('2d');
+    // Need crossorigin-safe image; same-origin so OK.
+    const tmp = new Image();
+    tmp.crossOrigin = 'anonymous';
+    tmp.onload = async () => {
+      ctx.drawImage(tmp, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+      canvas.toBlob(async (blob) => {
+        if (!blob) { setStatus(answerBox, 'danger', 'Crop failed.'); return; }
+        const fd = new FormData();
+        fd.append('region', blob, 'region.png');
+        fd.append('question', q || 'Explain this region.');
+        try {
+          const r = await fetch("{% url 'ui:ask_region' cid %}", {
+            method: 'POST', headers: {'X-CSRFToken': csrf}, body: fd,
+          });
+          const data = await r.json();
+          if (data.error) setStatus(answerBox, 'danger', 'Error: ' + data.error);
+          else {
+            const wrap2 = document.createElement('div');
+            wrap2.className = 'alert alert-light border border-primary';
+            wrap2.style.borderLeftWidth = '4px';
+            const head = document.createElement('div');
+            head.className = 'small text-muted mb-1';
+            head.textContent = '↳ Region question: "' + (q || 'Explain this') + '"';
+            wrap2.appendChild(head);
+            const body = document.createElement('div');
+            window.renderMarkdownInto(body, data.answer || '');
+            wrap2.appendChild(body);
+            answerBox.replaceChildren(wrap2);
+            if (window.renderMathInElement) renderMathIn(wrap2);
+          }
+        } catch (err) { setStatus(answerBox, 'danger', 'Failed: ' + err); }
+        setTimeout(() => overlay.style.display = 'none', 500);
+      }, 'image/png');
+    };
+    tmp.src = img.src;
+  });
+}
+
+// Wire on accordion expand
+document.querySelectorAll('#mat-accordion .accordion-collapse').forEach(coll => {
+  coll.addEventListener('shown.bs.collapse', () => {
+    setupRegionSelect(coll.closest('.accordion-item'));
   });
 });
 

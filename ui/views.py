@@ -296,6 +296,39 @@ def ocr_text(request, cid: int, rel: str):
     return HttpResponse(f.read_text(), content_type="text/plain; charset=utf-8")
 
 
+@require_POST
+def ask_region(request, cid: int):
+    """Accept a cropped PNG region + question, send to Gemini multimodal."""
+    cdir = _course_dir_for(cid)
+    question = request.POST.get("question", "").strip() or "Explain this part of the page."
+    img_file = request.FILES.get("region")
+    if not img_file:
+        return HttpResponse(json.dumps({"error": "no region image"}),
+                            status=400, content_type="application/json")
+    import time as _time, uuid as _uuid
+    tmpdir = cdir / "bundles" / "_attempts"
+    tmpdir.mkdir(parents=True, exist_ok=True)
+    dest = tmpdir / f"region_{int(_time.time())}_{_uuid.uuid4().hex[:8]}.png"
+    with open(dest, "wb") as f:
+        for chunk in img_file.chunks():
+            f.write(chunk)
+    sys.path.insert(0, str(ROOT))
+    from gemini_client import generate_with_images
+    prompt = (
+        "The image is a cropped region of a college statistics page. "
+        f"Student question: {question}\n\n"
+        "Answer concisely with Markdown + LaTeX ($...$ inline, $$...$$ block). "
+        "If the region contains a problem, solve it step-by-step."
+    )
+    try:
+        text = generate_with_images(prompt, [str(dest)], max_output_tokens=4096)
+    except Exception as e:
+        return HttpResponse(json.dumps({"error": str(e)}),
+                            status=500, content_type="application/json")
+    return HttpResponse(json.dumps({"answer": text}),
+                        content_type="application/json")
+
+
 def page_count(request, cid: int, rel: str):
     cdir = _course_dir_for(cid)
     pdf = (cdir / rel).resolve()
@@ -873,6 +906,38 @@ def calendar_dedup(request, cid: int):
                 "existing": same_date,
             })
     return HttpResponse(json.dumps({"matches": matches, "count": len(matches)}),
+                        content_type="application/json")
+
+
+@require_POST
+def calendar_delete_events(request, cid: int):
+    """Delete a list of Google Calendar event IDs the user confirmed."""
+    cal_id = request.POST.get("calendar_id", "primary").strip() or "primary"
+    ids_raw = request.POST.get("event_ids", "")
+    try:
+        ids = json.loads(ids_raw) if ids_raw else []
+    except Exception:
+        return HttpResponse(json.dumps({"error": "bad event_ids"}), status=400,
+                            content_type="application/json")
+    if not isinstance(ids, list) or not ids:
+        return HttpResponse(json.dumps({"deleted": 0}),
+                            content_type="application/json")
+    sys.path.insert(0, str(ROOT))
+    from calendar_sync import get_calendar_service
+    try:
+        service = get_calendar_service()
+    except Exception as exc:
+        return HttpResponse(json.dumps({"error": str(exc)}), status=500,
+                            content_type="application/json")
+    deleted = 0
+    failed = []
+    for eid in ids:
+        try:
+            service.events().delete(calendarId=cal_id, eventId=eid).execute()
+            deleted += 1
+        except Exception as exc:
+            failed.append({"id": eid, "error": str(exc)[:200]})
+    return HttpResponse(json.dumps({"deleted": deleted, "failed": failed}),
                         content_type="application/json")
 
 
