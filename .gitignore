@@ -11,5 +11,6 @@ db.sqlite3
 */_attempts/
 */_ocr/
 .llm_cache/
+*/.panopto_skip
 */chroma/
 */_snippets/

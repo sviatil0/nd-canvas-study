@@ -366,8 +366,9 @@ def dump_course(client: CanvasClient, course: dict, base: Path,
         prog.asset("announcements", "list", None, status="skipped", note=str(e)[:200])
     prog.step_done("announcements")
 
-    # Panopto — auto-attempt, skip silently if no captions / not available
-    if with_panopto:
+    # Panopto — try only if no marker says course has captions disabled.
+    skip_marker = base / ".panopto_skip"
+    if with_panopto and not skip_marker.exists():
         prog.step_start("panopto")
         try:
             print("  → Panopto: trying transcripts (auto-skip if unavailable)...", flush=True)
@@ -376,13 +377,21 @@ def dump_course(client: CanvasClient, course: dict, base: Path,
                 capture_output=True, text=True, timeout=600,
             )
             tail = (r.stdout + r.stderr).splitlines()[-5:]
-            wrote = sum(1 for line in tail if "Wrote" in line and "transcript" in line)
-            prog.asset("panopto", "auto", str(base / "transcripts"),
-                       status="ok" if r.returncode == 0 else "skipped",
-                       note=" | ".join(tail)[:300])
+            wrote = sum(1 for line in tail if "✓" in line and "chars" in line)
+            note = " | ".join(tail)[:300]
+            if wrote == 0:
+                # No captions available — drop a marker so future syncs skip
+                skip_marker.write_text("Captions disabled by instructor; tried " + str(time.time()))
+                prog.asset("panopto", "auto", None, status="skipped",
+                           note="0 transcripts (captions disabled). Future syncs will skip.")
+            else:
+                prog.asset("panopto", "auto", str(base / "transcripts"),
+                           status="ok", note=f"{wrote} transcripts: {note}")
         except Exception as e:
             prog.asset("panopto", "auto", None, status="skipped", note=str(e)[:200])
         prog.step_done("panopto")
+    elif skip_marker.exists():
+        print("  → Panopto: cached skip marker (captions disabled)", flush=True)
 
     prog.finish()
     print(f"\nProgress log: {prog.path}", flush=True)
