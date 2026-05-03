@@ -52,12 +52,12 @@
   </div>
 </div>
 <div class="alert alert-secondary" id="summary-empty" {% if have_summary %}hidden{% endif %}>
-  No concept summary yet. Click <strong>Generate summary</strong> above (uses local Claude, ~30s).
+  No concept summary yet. Click <strong>Generate summary</strong> above (uses Gemini 2.5 Pro on Vertex AI, ~30-60s).
 </div>
 <div class="alert alert-info d-none" id="summary-loading">
   <div class="d-flex align-items-center gap-2">
     <div class="spinner-border spinner-border-sm" role="status"></div>
-    <div>Generating summary with local Claude… <span id="summary-elapsed">0</span>s elapsed.</div>
+    <div>Generating summary with Gemini 2.5 Pro… <span id="summary-elapsed">0</span>s elapsed.</div>
   </div>
   <small class="text-muted">Reads formula sheet + 6 in-class chunks. Usually 20–60s.</small>
 </div>
@@ -363,9 +363,11 @@ const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.
       </div>
     </div>
     <div class="card-body">
-      <details class="mb-2">
+      <details class="mb-2 problem-stem-wrap" data-full-body="{{ p.full_body|default:p.stem|escape }}">
         <summary class="text-primary" style="cursor:pointer;"><strong>Stem:</strong> {{ p.stem }}…</summary>
-        <div class="mt-2 p-2 bg-light border rounded" style="white-space:pre-wrap; font-size:14px;">{{ p.full_body|default:p.stem }}</div>
+        <div class="mt-2 p-3 border rounded problem-full" style="background:#fafaf6; font-size:15px; line-height:1.55;">
+          <em class="text-muted">rendering…</em>
+        </div>
       </details>
       <details class="mb-2">
         <summary class="text-primary" style="cursor:pointer;">Show page snippet</summary>
@@ -564,6 +566,34 @@ document.querySelectorAll('.grade-btn').forEach(btn => {
       else setAnswer(target, {model: 'gemini-2.5-pro', answer: data.feedback, input_tokens: 0, output_tokens: 0, cache_read: 0});
     } catch (e) { setStatus(target, 'danger', String(e)); }
     finally { btn.disabled = false; }
+  });
+});
+
+// --- Pretty-print problem full body when expanded ---
+function formatProblemBody(raw) {
+  // Split off MC choices (A./B./C./D./E.) into separate lines
+  let body = raw.replace(/\s+/g, ' ').trim();
+  // Insert breaks before " A. " " B. " etc. when followed by a capitalized word/number
+  body = body.replace(/\s([A-E])\.\s+(?=[A-Z0-9])/g, '\n- **$1.** ');
+  // Keep numbered subparts on their own lines
+  body = body.replace(/\s\(([a-h])\)\s+/g, '\n- **($1)** ');
+  // Stem prefix bold
+  body = body.replace(/^(\d+)\.\s+\(?(\d+\s*points?)?\)?\s*/i,
+                      (_m, num, pts) => `**${num}.**${pts ? '  *(' + pts + ')*' : ''}  `);
+  return body;
+}
+document.querySelectorAll('.problem-stem-wrap').forEach(det => {
+  det.addEventListener('toggle', () => {
+    if (!det.open) return;
+    const target = det.querySelector('.problem-full');
+    if (target.dataset.rendered) return;
+    target.dataset.rendered = '1';
+    const raw = det.dataset.fullBody || '';
+    const md = formatProblemBody(raw);
+    window.markedReady.then(() => {
+      window.renderMarkdownInto(target, md);
+      if (window.renderMathInElement) renderMathIn(target);
+    });
   });
 });
 
