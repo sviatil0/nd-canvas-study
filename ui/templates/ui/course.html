@@ -21,6 +21,14 @@
       <button class="btn btn-success w-100">Run gap analysis</button>
     </form>
   </div>
+  <div class="col">
+    <form method="post" action="{% url 'ui:build_index' cid %}">{% csrf_token %}
+      <button class="btn btn-warning w-100">Build vector index</button>
+    </form>
+  </div>
+  <div class="col">
+    <a class="btn btn-info w-100" href="{% url 'ui:ask' cid %}">Semantic search</a>
+  </div>
 </div>
 
 {% if have_gap %}

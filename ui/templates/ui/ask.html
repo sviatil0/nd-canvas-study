@@ -1,0 +1,40 @@
+{% extends "ui/base.html" %}
+{% block title %}Ask · {{ cid }}{% endblock %}
+{% block content %}
+<a class="btn btn-sm btn-outline-secondary mb-3" href="{% url 'ui:course_detail' cid %}">&larr; back</a>
+<h2>Semantic search</h2>
+
+<form class="row g-2 mb-4" method="get">
+  <div class="col-md-7"><input class="form-control" name="q" value="{{ q }}" placeholder="e.g. how to compute the F-statistic for one-way ANOVA"></div>
+  <div class="col-md-2">
+    <select class="form-select" name="category">
+      <option value="">all categories</option>
+      {% for c in "exams,exam_solutions,practice,homeworks,hw_keys,in_class,lectures,tables,other"|cut:" "|slice:":" %}{% endfor %}
+      <option value="exams"          {% if cat == "exams" %}selected{% endif %}>exams</option>
+      <option value="exam_solutions" {% if cat == "exam_solutions" %}selected{% endif %}>exam solutions</option>
+      <option value="practice"       {% if cat == "practice" %}selected{% endif %}>practice</option>
+      <option value="homeworks"      {% if cat == "homeworks" %}selected{% endif %}>homeworks</option>
+      <option value="hw_keys"        {% if cat == "hw_keys" %}selected{% endif %}>HW keys</option>
+      <option value="in_class"       {% if cat == "in_class" %}selected{% endif %}>in-class</option>
+      <option value="tables"         {% if cat == "tables" %}selected{% endif %}>tables</option>
+    </select>
+  </div>
+  <div class="col-md-1"><input class="form-control" name="k" value="{{ k }}" type="number" min="1" max="20"></div>
+  <div class="col-md-2"><button class="btn btn-primary w-100">Search</button></div>
+</form>
+
+{% for r in results %}
+  <div class="card mb-3">
+    <div class="card-body">
+      <p class="text-muted small mb-2">
+        <span class="badge bg-secondary">{{ r.meta.category }}</span>
+        <a href="{% url 'ui:serve_file' cid r.meta.source %}" target="_blank">{{ r.meta.source }}</a>
+        · page {{ r.meta.page }} · distance {{ r.dist }}
+      </p>
+      <pre style="white-space:pre-wrap; margin:0;">{{ r.doc|truncatechars:1200 }}</pre>
+    </div>
+  </div>
+{% empty %}
+  {% if q %}<p class="text-muted">No results.</p>{% endif %}
+{% endfor %}
+{% endblock %}

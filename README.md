@@ -1,6 +1,44 @@
 # nd-canvas-study
 
-Download Notre Dame Canvas course material via the REST API, bundle it into LLM-friendly text packs, and cross-reference exam vs homework topic frequency to find under-prepared areas. Includes a small Django + Bootstrap UI.
+End-to-end exam-prep tool for Notre Dame Canvas courses. Give it a class name and it will:
+
+1. Log into Canvas (Firefox SSO + Duo, captured automatically by Playwright).
+2. Download every PDF, page, assignment, and module from the course.
+3. Extract text and bundle it into LLM-injectable categorized files.
+4. Cross-reference exam/practice problems against homework/in-class material to find under-prepared topics.
+5. Split the exam PDFs into individual problems, classify each by topic, and link back to the prep files that cover it.
+6. Index every chunk into a local Chroma vector DB so you can semantic-search the corpus.
+7. Optionally serve everything in a local Django + Bootstrap UI.
+
+## One-command flow
+
+```bash
+python prep.py "statistics"
+```
+
+Output (paths, top priorities, study plan, vector index ready):
+
+```
+$ python prep.py statistics
+✓ Canvas session OK
+Matched 'statistics' → [128781] Statistics (score 1.00)
+... downloads, bundles, gap analysis, problem extraction, vector index ...
+
+Top priorities (exam-heavy vs prep-light):
+  anova                           exam= 26  prep= 37  gap=+14.80pp
+  descriptive_statistics          exam= 53  prep=288  gap=+7.72pp
+  regression_simple               exam= 19  prep= 65  gap=+6.81pp
+  ...
+```
+
+Useful flags:
+
+```bash
+python prep.py --list                         # list all your active courses
+python prep.py "statistics" --skip-sync       # don't redownload
+python prep.py "statistics" --ask "tukey HSD multiple comparisons"
+python prep.py "statistics" --serve           # also launch the Django UI
+```
 
 ## Setup
 
@@ -12,97 +50,73 @@ playwright install firefox
 python manage.py migrate
 ```
 
-## CLI usage
+## Pipeline pieces
 
-### 1. Log in (auto cookie capture)
+Each step is a standalone script, all wired together by `prep.py`:
 
-Launches a real Firefox window. Complete ND SSO + Duo. Cookies are saved to `cookies.json`.
+| Script           | Purpose                                                                    |
+|------------------|----------------------------------------------------------------------------|
+| `auth.py`        | Launches Firefox, waits for ND SSO + Duo, saves cookies to `cookies.json`. |
+| `canvas_client.py` | Cookie-auth REST wrapper around the Canvas API.                          |
+| `download.py`    | Walks Modules → files/pages/assignments. Works even when `/files` is locked. |
+| `bundle.py`      | PDF → text, categorized into `lectures / homeworks / hw_keys / in_class / exams / exam_solutions / practice / tables / other`. |
+| `analyze.py`     | Topic-frequency gap report: which topics show up more in exams than in HW. |
+| `problems.py`    | Splits exam PDFs into individual problems, classifies each by topic, links back to the prep files for review. |
+| `vectorize.py`   | Builds a local Chroma vector index using `all-MiniLM-L6-v2` embeddings. Supports semantic queries with optional category filter. |
+| `prep.py`        | Orchestrator. Class name → everything above.                              |
 
-```bash
-python auth.py            # log in
-python auth.py --check    # verify session is alive
-```
-
-### 2. List + download a course
-
-```bash
-python download.py                                 # list all active courses
-python download.py --course 128781 --name statistics
-```
-
-Output tree:
+## Output layout
 
 ```
 downloads/<id>_<slug>/
   course.json
   modules.json
-  modules/<module-name>/
-    <pdf files...>
-    pages/<slug>.html
-    assignments/<id>_<slug>.html
-    quizzes/<id>.json
-  assignments.json
-  discussions.json
+  modules/<chapter>/<files>.pdf
+  modules/<chapter>/pages/<slug>.html
+  bundles/
+    lectures.md, homeworks.md, hw_keys.md, in_class.md
+    exams.md, exam_solutions.md, practice.md, tables.md, other.md
+    MASTER.md, manifest.json
+    topic_gap_report.md, topic_gap.json
+    STUDY_PLAN.md, problems.json
+  chroma/                  # vector index
 ```
 
-The downloader uses the Modules walker as the primary spine, so it works even when the course's bulk Files endpoint is locked down (Statistics is one such course).
+`STUDY_PLAN.md` is the file you actually want to read before the exam — topics ranked by exam-problem count, each with sample problem stems (with source PDF + page) and the list of HW/in-class files to review.
 
-### 3. Build LLM-injectable bundles
-
-```bash
-python bundle.py --course-dir downloads/128781_statistics
-```
-
-Produces `downloads/<course>/bundles/`:
-
-- `lectures.md`, `homeworks.md`, `hw_keys.md`, `in_class.md`, `exams.md`, `exam_solutions.md`, `practice.md`, `tables.md`, `other.md`
-- Each bundle has `## SOURCE: <relative path>` separators so an LLM can cite which file a passage came from.
-- `MASTER.md` and `manifest.json` index everything.
-
-### 4. Topic-gap analysis
-
-```bash
-python analyze.py --course-dir downloads/128781_statistics
-```
-
-Counts hits for ~25 statistics topics (ANOVA, regression, hypothesis testing, distributions, …) across the exam corpus and the prep corpus. Reports the topics that take a larger share of exam content than of HW/in-class content — i.e., things you've practiced the least relative to how often they're tested.
-
-Output: `bundles/topic_gap_report.md` and `bundles/topic_gap.json`.
-
-### 5. Web UI
+## Web UI
 
 ```bash
 python manage.py runserver
 # http://127.0.0.1:8000
 ```
 
-- `/` — auth state, downloaded courses, remote courses available to download
-- `/course/<id>/` — files, bundles, gap report; buttons to re-sync, rebuild bundles, re-run analysis
+- `/` — auth, downloaded courses, downloadable courses
+- `/course/<id>/` — files, bundles, gap report, study plan
+  - "Build LLM bundles" / "Run gap analysis" / "Build vector index" buttons
+- `/course/<id>/ask/?q=...` — semantic search across the course (with category filter)
 
 ## Switching to a different class
 
-Everything is parameterized by Canvas course ID. To prep for a different course, just:
+Pure CLI flow is parameterized by class name (or course id):
 
 ```bash
-python download.py --course <other_id> --name <slug>
-python bundle.py --course-dir downloads/<other_id>_<slug>
-python analyze.py --course-dir downloads/<other_id>_<slug>
+python prep.py "computer architecture"
+python prep.py "computer architecture" --ask "pipeline hazards"
 ```
 
-The topic dictionary in `analyze.py` is statistics-specific; replace `TOPICS` with the relevant keyword aliases for another subject.
+The topic dictionary in `analyze.py` is statistics-specific. For a non-stats course, edit `TOPICS` in `analyze.py` (each entry is a topic name → list of regex aliases). The rest of the pipeline is subject-agnostic.
 
-## Files
+## Notes on the vector index
 
-- `auth.py` — Playwright Firefox SSO capture
-- `canvas_client.py` — Canvas REST wrapper (cookie auth)
-- `download.py` — Modules-walker downloader
-- `bundle.py` — PDF → categorized text bundles
-- `analyze.py` — exam vs prep topic-frequency gap
-- `web/`, `ui/` — Django + Bootstrap frontend
-- `cookies.json`, `downloads/` — local data, gitignored
+- Embedding model: `sentence-transformers/all-MiniLM-L6-v2` (downloads ~80 MB on first run, runs locally, no API key).
+- Chunking: 1500-char chunks with 200-char overlap, one chunk per page.
+- Each chunk's metadata stores `source` (relative path), `page`, `chunk`, and `category`, so every search hit cites the exact file.
 
-## Notes
+## Caveats
 
-- Cookie session expires when Canvas logs you out. Re-run `python auth.py`.
-- Quizzes often return 403 even with a valid session — Canvas restricts question listing.
+- Canvas session cookies expire when you log out. Re-run `python prep.py <class>` and it'll auto-prompt for re-login.
+- Some courses (Statistics is one) lock down `/api/v1/courses/<id>/files`. The Modules walker handles this by fetching files individually via `/api/v1/files/<id>`.
+- Quizzes often return 403 for question listing — that's a Canvas restriction, not a bug.
 - PDF text extraction quality depends on the source PDF; image-only scans yield empty text.
+- `cookies.json`, `downloads/`, `chroma/`, `db.sqlite3`, `.env` are all gitignored. Verify before pushing.

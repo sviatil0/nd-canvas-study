@@ -179,3 +179,31 @@ def serve_file(request, cid: int, rel: str):
     if not target.exists():
         raise Http404
     return FileResponse(open(target, "rb"))
+
+
+@require_POST
+def build_index(request, cid: int):
+    cdir = _course_dir_for(cid)
+    code, out = _run([PYTHON, "vectorize.py", "--course-dir", str(cdir), "--rebuild"])
+    if code == 0:
+        messages.success(request, "Vector index built.")
+    else:
+        messages.error(request, f"Index failed: {out}")
+    return redirect("ui:course_detail", cid=cid)
+
+
+def ask(request, cid: int):
+    cdir = _course_dir_for(cid)
+    q = request.GET.get("q", "").strip()
+    k = int(request.GET.get("k", 5))
+    cat = request.GET.get("category", "").strip()
+    results = []
+    if q and (cdir / "chroma").exists():
+        sys.path.insert(0, str(ROOT))
+        from vectorize import get_collection
+        coll = get_collection(cdir)
+        where = {"category": cat} if cat else None
+        res = coll.query(query_texts=[q], n_results=k, where=where)
+        for doc, meta, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0]):
+            results.append({"doc": doc, "meta": meta, "dist": round(dist, 3)})
+    return render(request, "ui/ask.html", {"cid": cid, "q": q, "k": k, "cat": cat, "results": results})
