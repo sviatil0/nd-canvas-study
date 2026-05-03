@@ -78,12 +78,16 @@ def index(request):
 
 @require_POST
 def auth_login(request):
-    code, out = _run([PYTHON, "auth.py"])
-    if code == 0:
-        messages.success(request, "Logged in. Cookies saved.")
-    else:
-        messages.error(request, f"Login failed: {out}")
-    return redirect("ui:index")
+    # Detached so the browser doesn't hang for 2 min while user SSOs.
+    subprocess.Popen(
+        [PYTHON, "auth.py"],
+        cwd=ROOT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    messages.info(request, "Re-auth started — Firefox window should appear. After SSO, badge will turn green.")
+    return redirect(request.META.get("HTTP_REFERER", "/"))
 
 
 def auth_check(request):

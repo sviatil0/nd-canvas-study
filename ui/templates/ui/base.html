@@ -60,11 +60,36 @@
 </head>
 <body class="bg-light">
 <nav class="navbar navbar-dark bg-dark mb-3">
-  <div class="container-fluid px-3">
+  <div class="container-fluid px-3 d-flex align-items-center gap-2">
     <a class="navbar-brand" href="{% url 'ui:index' %}">ND Canvas Study</a>
-    <a class="btn btn-sm btn-outline-light" href="{% url 'ui:auth_check' %}" target="_blank">auth</a>
+    <span class="ms-auto"></span>
+    <span id="auth-state" class="badge bg-secondary">checking…</span>
+    <form method="post" action="{% url 'ui:auth' %}" class="d-inline">{% csrf_token %}
+      <button class="btn btn-sm btn-outline-warning" type="submit" id="reauth-btn">Re-auth Canvas</button>
+    </form>
+    <a class="btn btn-sm btn-outline-light" href="{% url 'ui:auth_check' %}" target="_blank">check</a>
   </div>
 </nav>
+<script>
+async function checkAuth() {
+  try {
+    const r = await fetch("{% url 'ui:auth_check' %}");
+    const txt = await r.text();
+    const el = document.getElementById('auth-state');
+    if (txt.startsWith('OK')) {
+      el.textContent = '● auth ok';
+      el.className = 'badge bg-success';
+    } else {
+      el.textContent = '✗ session expired';
+      el.className = 'badge bg-danger';
+    }
+  } catch (e) {
+    document.getElementById('auth-state').textContent = '? error';
+  }
+}
+checkAuth();
+setInterval(checkAuth, 15000);
+</script>
 <main class="container-fluid px-3" style="max-width:1280px;">
   {% if messages %}
     {% for m in messages %}
