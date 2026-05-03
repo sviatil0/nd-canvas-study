@@ -66,6 +66,53 @@
           throwOnError: false,
           ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
         });
+        addRemNoteCopyButtons(el);
+      });
+    }
+    // Add a 📋 button next to each rendered formula that copies the LaTeX
+    // source wrapped in $$...$$ for one-paste insertion into RemNote.
+    function addRemNoteCopyButtons(root) {
+      if (!root) return;
+      const nodes = root.querySelectorAll('.katex:not([data-rn-btn])');
+      nodes.forEach((k) => {
+        k.setAttribute('data-rn-btn', '1');
+        // Source LaTeX is in the annotation MathML
+        const ann = k.querySelector('annotation[encoding="application/x-tex"]');
+        if (!ann) return;
+        const src = ann.textContent.trim();
+        const isBlock = k.classList.contains('katex-display') ||
+                        k.parentElement?.classList.contains('katex-display');
+        const wrapped = isBlock ? '$$' + src + '$$' : '$' + src + '$';
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.title = 'Copy as $$...$$ for RemNote';
+        btn.textContent = '📋';
+        btn.style.cssText = 'border:none; background:transparent; cursor:pointer; ' +
+                            'font-size:11px; padding:0 4px; opacity:0.4; ' +
+                            'vertical-align:middle; transition:opacity .15s;';
+        btn.addEventListener('mouseenter', () => btn.style.opacity = '1');
+        btn.addEventListener('mouseleave', () => btn.style.opacity = '0.4');
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          try {
+            await navigator.clipboard.writeText(wrapped);
+            btn.textContent = '✓';
+            setTimeout(() => { btn.textContent = '📋'; }, 1200);
+          } catch (err) {
+            btn.textContent = '✗';
+          }
+        });
+        // Display formulas: button on its own line; inline: right after
+        if (isBlock) {
+          const wrap = document.createElement('div');
+          wrap.style.cssText = 'text-align:right; margin-top:-8px; margin-bottom:4px;';
+          wrap.appendChild(btn);
+          (k.parentElement?.classList.contains('katex-display')
+            ? k.parentElement
+            : k).insertAdjacentElement('afterend', wrap);
+        } else {
+          k.insertAdjacentElement('afterend', btn);
+        }
       });
     }
     window.markedReady = new Promise((resolve) => {
