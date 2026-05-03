@@ -1,15 +1,18 @@
-"""LLM-backed problem solver with prompt caching.
+"""LLM problem solver via local Claude Code CLI (no API billing).
 
-Reads ANTHROPIC_API_KEY from env. Uses Claude Sonnet 4.6 with prompt caching
-on the long course-context block.
+Uses `claude -p` headless mode: pipes problem + course context to the local
+claude binary, captures stdout. Inherits user's Claude Code subscription.
 """
 from __future__ import annotations
 
 import json
-import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
-MODEL = "claude-sonnet-4-6"
+CLAUDE_BIN = shutil.which("claude") or "claude"
+TIMEOUT_SEC = 180
 
 SYSTEM_PROMPT = (
     "You are an expert statistics tutor for ACMS 30440 at Notre Dame. "
@@ -17,12 +20,12 @@ SYSTEM_PROMPT = (
     "every intermediate calculation, and the final answer with units. "
     "Cite which course concepts/chapters apply. If the problem is multiple "
     "choice, identify the correct option and explain why each distractor is wrong. "
-    "Use Markdown with LaTeX for formulas ($...$ inline, $$...$$ block)."
+    "Use Markdown with LaTeX for formulas ($...$ inline, $$...$$ block). "
+    "Do NOT call any tools or read files; respond only with the worked solution."
 )
 
 
-def _gather_context(course_dir: Path, topic: str | None, max_chars: int = 60000) -> str:
-    """Pull formula sheet + topic-relevant in_class material as cached context."""
+def _gather_context(course_dir: Path, topic: str | None, max_chars: int = 40000) -> str:
     parts: list[str] = []
     formulas = course_dir / "modules/final-exam-materials/30440feformulas.pdf"
     if formulas.exists():
@@ -32,75 +35,59 @@ def _gather_context(course_dir: Path, topic: str | None, max_chars: int = 60000)
             parts.append("=== FORMULA SHEET ===\n" + ftxt)
         except Exception:
             pass
-
     if topic and (course_dir / "chroma").exists():
         try:
-            import sys
             sys.path.insert(0, str(Path(__file__).parent))
             from vectorize import get_collection
             coll = get_collection(course_dir)
             res = coll.query(
                 query_texts=[topic],
-                n_results=8,
+                n_results=6,
                 where={"category": "in_class"},
             )
             for doc, meta in zip(res["documents"][0], res["metadatas"][0]):
                 parts.append(f"=== {meta['source']} p{meta['page']} ===\n{doc}")
         except Exception as e:
             parts.append(f"[context retrieval failed: {e}]")
-
-    out = "\n\n".join(parts)
-    return out[:max_chars]
+    return ("\n\n".join(parts))[:max_chars]
 
 
 def solve(problem_text: str, course_dir: Path, topic: str | None = None) -> dict:
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        return {"error": "ANTHROPIC_API_KEY not set in environment."}
+    if not shutil.which("claude"):
+        return {"error": "`claude` CLI not on PATH. Install Claude Code."}
 
-    try:
-        from anthropic import Anthropic
-    except ImportError:
-        return {"error": "anthropic SDK not installed."}
-
-    client = Anthropic(api_key=api_key)
     context = _gather_context(course_dir, topic)
-
-    msg = client.messages.create(
-        model=MODEL,
-        max_tokens=2048,
-        system=SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"Course reference material (use as needed):\n\n{context}",
-                        "cache_control": {"type": "ephemeral"},
-                    },
-                    {
-                        "type": "text",
-                        "text": (
-                            f"Topic hint: {topic or 'general'}\n\n"
-                            f"Problem to solve:\n\n{problem_text}\n\n"
-                            "Walk me through it step by step."
-                        ),
-                    },
-                ],
-            }
-        ],
+    prompt = (
+        f"{SYSTEM_PROMPT}\n\n"
+        f"Topic hint: {topic or 'general'}\n\n"
+        f"--- COURSE REFERENCE (for your reference, do not echo) ---\n"
+        f"{context}\n"
+        f"--- END REFERENCE ---\n\n"
+        f"Problem to solve:\n\n{problem_text}\n\n"
+        f"Walk me through it step by step."
     )
 
-    text = "".join(b.text for b in msg.content if hasattr(b, "text"))
-    usage = msg.usage
+    try:
+        proc = subprocess.run(
+            [CLAUDE_BIN, "-p", prompt],
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT_SEC,
+        )
+    except subprocess.TimeoutExpired:
+        return {"error": f"claude CLI timed out after {TIMEOUT_SEC}s"}
+    except Exception as e:
+        return {"error": f"claude CLI failed: {e}"}
+
+    if proc.returncode != 0:
+        return {"error": f"claude exit {proc.returncode}: {proc.stderr[:500]}"}
+
     return {
-        "answer": text,
-        "model": MODEL,
-        "input_tokens": usage.input_tokens,
-        "output_tokens": usage.output_tokens,
-        "cache_read": getattr(usage, "cache_read_input_tokens", 0),
-        "cache_creation": getattr(usage, "cache_creation_input_tokens", 0),
+        "answer": proc.stdout.strip(),
+        "model": "claude-code-cli (local subscription)",
+        "input_tokens": len(prompt) // 4,
+        "output_tokens": len(proc.stdout) // 4,
+        "cache_read": 0,
     }
 
 
