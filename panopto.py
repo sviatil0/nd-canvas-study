@@ -1,15 +1,22 @@
 """Download Panopto video transcripts for Notre Dame Canvas courses.
 
+NOTE: ND's Panopto deployment restricts caption/transcript access to LTI-launched
+sessions tied to a Canvas course. Direct DeliveryInfo / Caption.ashx requests
+return ErrorCode 6 ("session isn't available") for non-LTI cookie sessions.
+This script discovers all video delivery IDs and tries multiple endpoints, but
+will return 0 transcripts for restricted courses. Files endpoint is still useful
+for IDs to feed into a future browser-driven scraper.
+
 Steps:
-    1. Read Canvas cookies (cookies.json), list pages prefixed `panopto-videos-`.
-    2. Extract `custom_context_delivery=<UUID>` Panopto session IDs from each page.
-    3. Auth to Panopto via Playwright (one-time login). Save cookies to panopto_cookies.json.
-    4. For each session, fetch transcript via the Pages/Transcript.aspx endpoint
-       and write plain-text transcript to downloads/<course>/transcripts/.
+    1. Read Canvas cookies, find pages with `panopto-videos-` slug or referenced
+       in any local HTML.
+    2. Extract `custom_context_delivery=<UUID>` from each page body.
+    3. Auth to Panopto via Playwright. Save cookies.
+    4. Try DeliveryInfo / Transcript / Caption.ashx — write text if returned.
 
 Usage:
     python panopto.py --course-dir downloads/128781_statistics
-    python panopto.py --course-dir <dir> --auth-only       # just save Panopto cookies
+    python panopto.py --course-dir <dir> --auth-only       # just save cookies
 """
 from __future__ import annotations
 
@@ -41,12 +48,43 @@ def list_panopto_pages(course_id: int, sess: requests.Session) -> list[dict]:
     pages = []
     while url:
         r = sess.get(url)
+        if r.status_code == 404:
+            return []
         r.raise_for_status()
         for p in r.json():
             if "panopto-videos-" in (p.get("url") or ""):
                 pages.append(p)
         url = r.links.get("next", {}).get("url")
     return pages
+
+
+PANOPTO_PAGE_LINK = re.compile(r'/courses/\d+/pages/(panopto-videos-[a-z0-9-]+)', re.I)
+
+
+def find_panopto_page_slugs(course_dir: Path) -> list[str]:
+    """Walk downloaded HTML and return unique panopto-video page slugs referenced."""
+    slugs: set[str] = set()
+    for html in course_dir.rglob("*.html"):
+        try:
+            body = html.read_text(errors="ignore")
+        except Exception:
+            continue
+        for m in PANOPTO_PAGE_LINK.finditer(body):
+            slugs.add(m.group(1).rstrip("\\").lower())
+    return sorted(slugs)
+
+
+def scan_local_for_panopto(course_dir: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for html in course_dir.rglob("*.html"):
+        try:
+            body = html.read_text(errors="ignore")
+        except Exception:
+            continue
+        if "custom_context_delivery" not in body.lower():
+            continue
+        out[html.stem] = body
+    return out
 
 
 def fetch_page_body(course_id: int, slug: str, sess: requests.Session) -> str:
@@ -161,19 +199,40 @@ def main() -> int:
 
     course_id = int(cdir.name.split("_", 1)[0])
     canvas = load_canvas_session()
-    print(f"Listing Panopto pages for course {course_id}...")
+    print(f"Listing Panopto pages for course {course_id} via API...")
     pages = list_panopto_pages(course_id, canvas)
-    print(f"  found {len(pages)} pages")
+    print(f"  found {len(pages)} pages via API")
+
+    sources: dict[str, str] = {}
+    for p in pages:
+        slug = p["url"]
+        sources[slug] = fetch_page_body(course_id, slug, canvas)
+
+    referenced = find_panopto_page_slugs(cdir)
+    print(f"Found {len(referenced)} panopto-video page slugs referenced in local HTML.")
+    for slug in referenced:
+        if slug in sources:
+            continue
+        try:
+            sources[slug] = fetch_page_body(course_id, slug, canvas)
+            print(f"  fetched {slug}")
+        except Exception as e:
+            print(f"  fail {slug}: {e}")
+
+    local = scan_local_for_panopto(cdir)
+    for label, body in local.items():
+        sources.setdefault(label, body)
+    print(f"  total page sources: {len(sources)}")
 
     pano = panopto_session()
     out_dir = cdir / "transcripts"
     out_dir.mkdir(exist_ok=True)
     manifest = []
 
-    for p in pages:
-        slug = p["url"]
-        body = fetch_page_body(course_id, slug, canvas)
+    for slug, body in sources.items():
         ids = extract_delivery_ids(body)
+        if not ids:
+            continue
         print(f"\n[{slug}] {len(ids)} videos")
         for vid in ids:
             dest = out_dir / f"{slug}__{vid}.txt"
