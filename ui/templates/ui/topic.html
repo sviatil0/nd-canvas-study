@@ -234,7 +234,17 @@ const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.
 </script>
 
 <hr class="my-4">
-<h3>Problems from exam/practice material</h3>
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h3 class="mb-0">Problems from all material</h3>
+  <form method="get" class="d-flex gap-2 align-items-center">
+    <label class="small text-muted mb-0">Sort:</label>
+    <select name="sort" class="form-select form-select-sm" onchange="this.form.submit()" style="width:auto;">
+      {% for key, label in sort_options %}
+        <option value="{{ key }}" {% if key == sort_by %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </form>
+</div>
 <div class="mb-3">
   <div class="d-flex justify-content-between small text-muted mb-1">
     <span>Progress: <span id="topic-done-count">{{ done_count }}</span> / {{ total_count }} solved</span>
@@ -273,6 +283,16 @@ const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.
             <span class="badge bg-light text-dark border" title="From in-class notes">in_class</span>
           {% else %}
             <span class="badge bg-secondary">{{ p.category }}</span>
+          {% endif %}
+          {% if p.likelihood %}
+            <span class="badge bg-dark" title="Likelihood score (heuristic)">L:{{ p.likelihood }}</span>
+          {% endif %}
+          {% if p.difficulty_label == 'hard' %}
+            <span class="badge bg-danger" title="Heuristic difficulty">hard</span>
+          {% elif p.difficulty_label == 'medium' %}
+            <span class="badge bg-warning text-dark">medium</span>
+          {% elif p.difficulty_label == 'easy' %}
+            <span class="badge bg-success">easy</span>
           {% endif %}
           <small class="text-muted text-truncate" style="min-width:0;">
             <a href="{% url 'ui:serve_file' cid p.source %}" target="_blank" class="text-muted">{{ p.source }}</a>

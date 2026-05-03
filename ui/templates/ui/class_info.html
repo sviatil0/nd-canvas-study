@@ -10,6 +10,9 @@
       <button class="btn btn-sm btn-outline-primary">{% if have_info %}Regenerate{% else %}Generate{% endif %}</button>
     </form>
     <button class="btn btn-sm btn-outline-info" id="cal-preview-btn">Preview calendar events</button>
+    <form method="post" action="{% url 'ui:calendar_grant' cid %}" class="d-inline">{% csrf_token %}
+      <button class="btn btn-sm btn-outline-warning" title="One-time: opens browser to grant Calendar scope">Grant Calendar access</button>
+    </form>
     <form method="post" action="{% url 'ui:calendar_sync_run' cid %}" id="cal-sync-form">{% csrf_token %}
       <button class="btn btn-sm btn-success">Sync to Google Calendar</button>
     </form>

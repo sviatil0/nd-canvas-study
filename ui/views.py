@@ -275,7 +275,22 @@ def topic_detail(request, cid: int, topic: str):
     if not problems_file.exists():
         raise Http404("run problems.py first")
     data = json.loads(problems_file.read_text())
-    problems = data.get(topic, [])
+    problems = list(data.get(topic, []))
+
+    sort_by = request.GET.get("sort", "likelihood")
+    sort_keys = {
+        "likelihood": lambda p: -p.get("likelihood", 0),
+        "source_weight": lambda p: (-p.get("source_weight", 0),
+                                    p.get("source", ""), p.get("page", 0)),
+        "difficulty_desc": lambda p: -p.get("difficulty", 0),
+        "difficulty_asc": lambda p: p.get("difficulty", 0),
+        "sequential": lambda p: (p.get("source", ""), p.get("page", 0),
+                                 p.get("problem", 0)),
+        "chapter": lambda p: (p.get("chapter") or 999,
+                              p.get("source", ""), p.get("problem", 0)),
+    }
+    if sort_by in sort_keys:
+        problems.sort(key=sort_keys[sort_by])
 
     sys.path.insert(0, str(ROOT))
     from topic_graph import GRAPH, prereqs_of, dependents_of
@@ -317,6 +332,15 @@ def topic_detail(request, cid: int, topic: str):
         "done_count": done_count,
         "total_count": len(annotated),
         "pct": int(round(100 * done_count / max(len(annotated), 1))),
+        "sort_by": sort_by,
+        "sort_options": [
+            ("likelihood", "Likelihood (most likely first)"),
+            ("source_weight", "Source weight (practice → exams → HW → in-class)"),
+            ("difficulty_desc", "Difficulty (hard first)"),
+            ("difficulty_asc", "Difficulty (easy first)"),
+            ("sequential", "Sequential (file order)"),
+            ("chapter", "Chapter number"),
+        ],
     })
 
 
@@ -695,6 +719,21 @@ def build_class_info(request, cid: int):
     return redirect("ui:class_info", cid=cid)
 
 
+@require_POST
+def calendar_grant(request, cid: int):
+    """Spawn gcloud ADC login with Calendar scope. Browser opens for SSO."""
+    subprocess.Popen(
+        ["gcloud", "auth", "application-default", "login",
+         "--scopes=https://www.googleapis.com/auth/cloud-platform,"
+         "https://www.googleapis.com/auth/calendar.events"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    messages.info(request, "Browser should open for Calendar grant. "
+                            "After SSO completes, click 'Sync to Google Calendar' again.")
+    return redirect("ui:class_info", cid=cid)
+
+
 def calendar_preview(request, cid: int):
     """Return JSON list of events the calendar sync would create/update."""
     cdir = _course_dir_for(cid)
@@ -728,10 +767,8 @@ def calendar_sync_run(request, cid: int):
     failed = out.count("FAIL ")
     if "insufficient authentication scopes" in out.lower():
         messages.error(request,
-            "Calendar scope missing. In your terminal run: "
-            "gcloud auth application-default login "
-            "--scopes=https://www.googleapis.com/auth/cloud-platform,"
-            "https://www.googleapis.com/auth/calendar.events")
+            "Calendar scope missing. Click 'Grant Calendar access' to open a "
+            "browser auth flow.")
     elif failed and not (created or updated):
         messages.error(request, f"Calendar sync: {failed} failed. Tail: {out[-800:]}")
     elif code == 0 or created or updated:

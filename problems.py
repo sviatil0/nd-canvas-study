@@ -183,6 +183,63 @@ SOURCE_WEIGHTS = {
     "other": 0,
 }
 
+# Difficulty heuristics: more parts, longer body, higher point values, more
+# complex math = higher difficulty.
+SUBPART_RE = re.compile(r"\([a-h]\)", re.I)
+POINTS_RE = re.compile(r"\((\d+)\s*points?\)", re.I)
+HARD_TOKENS = (
+    "anova", "regression", "tukey", "interaction",
+    "multiple", "indicator", "joint", "covariance",
+    "likelihood", "moment", "estimator", "p-value",
+    "chi-square", "non-parametric", "studentized",
+)
+EASY_TOKENS = ("mean", "median", "mode", "histogram", "stem-and-leaf",
+               "range", "boxplot", "skew", "uniform")
+
+
+def difficulty_score(stem: str, body_len: int = 0) -> tuple[int, str]:
+    """Return (0-10 score, label). Pure heuristic."""
+    s = stem.lower()
+    score = 0
+    sub_parts = len(SUBPART_RE.findall(s))
+    score += min(sub_parts * 2, 4)  # up to +4 for many parts
+    pm = POINTS_RE.search(s)
+    if pm:
+        try:
+            pts = int(pm.group(1))
+            score += min(pts // 2, 3)  # up to +3 for high-point Qs
+        except ValueError:
+            pass
+    if body_len > 800:
+        score += 1
+    if body_len > 1500:
+        score += 1
+    score += sum(1 for t in HARD_TOKENS if t in s)
+    score -= sum(1 for t in EASY_TOKENS if t in s)
+    score = max(0, min(score, 10))
+    label = "easy" if score <= 3 else "medium" if score <= 6 else "hard"
+    return score, label
+
+
+def likelihood_score(category: str, source: str, chapter: int | None) -> float:
+    """Probability proxy of appearing on the final exam. 0-100."""
+    score = 0.0
+    score += SOURCE_WEIGHTS.get(category, 0) * 10  # up to 50
+    src = source.lower()
+    # Practice problems for the final are gold
+    if "extra-practice" in src or "practice" in src:
+        score += 30
+    if "final" in src:
+        score += 25
+    if "e1" in src or "e2" in src or "exam-1" in src or "exam-2" in src:
+        score += 15
+    # Later chapters tend to be over-represented in finals
+    if chapter and chapter >= 10:
+        score += 10
+    elif chapter and chapter >= 6:
+        score += 5
+    return round(score, 1)
+
 
 def build_study_plan(course_dir: Path) -> None:
     grouped = collect_pdfs(course_dir)
@@ -226,6 +283,9 @@ def build_study_plan(course_dir: Path) -> None:
                     (pn for off, pn in reversed(page_breaks) if off <= offset),
                     1,
                 ) if offset >= 0 else num
+                ch = chapter_from_path(rel)
+                d_score, d_label = difficulty_score(stem, len(body))
+                like = likelihood_score(cat, rel, ch)
                 by_topic[topic].append({
                     "source": rel,
                     "category": cat,
@@ -233,6 +293,10 @@ def build_study_plan(course_dir: Path) -> None:
                     "page": page,
                     "problem": num,
                     "stem": stem,
+                    "chapter": ch,
+                    "difficulty": d_score,
+                    "difficulty_label": d_label,
+                    "likelihood": like,
                 })
 
     # Sort each topic's problems by source weight (likelihood proxy)
