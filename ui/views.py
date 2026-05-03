@@ -192,6 +192,50 @@ def build_index(request, cid: int):
     return redirect("ui:course_detail", cid=cid)
 
 
+def topic_detail(request, cid: int, topic: str):
+    cdir = _course_dir_for(cid)
+    problems_file = cdir / "bundles" / "problems.json"
+    if not problems_file.exists():
+        raise Http404("run problems.py first")
+    data = json.loads(problems_file.read_text())
+    problems = data.get(topic, [])
+    return render(request, "ui/topic.html", {
+        "cid": cid,
+        "topic": topic,
+        "problems": problems,
+    })
+
+
+def snippet(request, cid: int, rel: str, page: int):
+    cdir = _course_dir_for(cid)
+    pdf_path = (cdir / rel).resolve()
+    if not str(pdf_path).startswith(str(cdir.resolve())) or not pdf_path.exists():
+        raise Http404
+    sys.path.insert(0, str(ROOT))
+    from snippets import render_page
+    try:
+        png = render_page(pdf_path, page, cdir)
+    except Exception as e:
+        return HttpResponse(f"render failed: {e}", status=500)
+    return FileResponse(open(png, "rb"), content_type="image/png")
+
+
+@require_POST
+def solve_problem(request, cid: int):
+    cdir = _course_dir_for(cid)
+    problem = request.POST.get("problem", "").strip()
+    topic = request.POST.get("topic", "").strip() or None
+    if not problem:
+        return HttpResponse("missing problem", status=400)
+    sys.path.insert(0, str(ROOT))
+    from solver import solve
+    result = solve(problem, cdir, topic)
+    return HttpResponse(
+        json.dumps(result, indent=2),
+        content_type="application/json",
+    )
+
+
 def ask(request, cid: int):
     cdir = _course_dir_for(cid)
     q = request.GET.get("q", "").strip()

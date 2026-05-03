@@ -17,4 +17,7 @@ urlpatterns = [
     path("course/<int:cid>/file/<path:rel>/", views.serve_file, name="serve_file"),
     path("course/<int:cid>/index/", views.build_index, name="build_index"),
     path("course/<int:cid>/ask/", views.ask, name="ask"),
+    path("course/<int:cid>/topic/<str:topic>/", views.topic_detail, name="topic_detail"),
+    path("course/<int:cid>/snippet/<path:rel>/<int:page>/", views.snippet, name="snippet"),
+    path("course/<int:cid>/solve/", views.solve_problem, name="solve_problem"),
 ]

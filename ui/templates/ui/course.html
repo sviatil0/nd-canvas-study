@@ -40,7 +40,7 @@
       <tbody>
       {% for r in gap_top %}
         <tr>
-          <td><strong>{{ r.topic }}</strong></td>
+          <td><a href="{% url 'ui:topic_detail' cid r.topic %}"><strong>{{ r.topic }}</strong></a></td>
           <td>{{ r.exam_hits }}</td>
           <td>{{ r.prep_hits }}</td>
           <td>{{ r.share_gap_pp }}</td>
