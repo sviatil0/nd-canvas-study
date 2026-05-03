@@ -35,6 +35,7 @@ urlpatterns = [
     path("course/<int:cid>/info/build/", views.build_class_info, name="build_class_info"),
     path("course/<int:cid>/calendar/preview/", views.calendar_preview, name="calendar_preview"),
     path("course/<int:cid>/calendar/sync/", views.calendar_sync_run, name="calendar_sync_run"),
+    path("course/<int:cid>/calendar/status/", views.calendar_status, name="calendar_status"),
     path("course/<int:cid>/calendar/grant/", views.calendar_grant, name="calendar_grant"),
     path("course/<int:cid>/calendar/ics/", views.calendar_ics, name="calendar_ics"),
     path("course/<int:cid>/calendar/ics/build/", views.calendar_ics_build, name="calendar_ics_build"),

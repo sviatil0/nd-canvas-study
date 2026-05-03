@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -102,16 +103,55 @@ def courses_refresh(request):
 @require_POST
 def sync_course(request, cid: int):
     name = request.POST.get("name", "").strip() or None
-    args = [PYTHON, "download.py", "--course", str(cid)]
-    if name:
-        args += ["--name", name]
+    cdir = _course_dir_for(cid) if any(d.name.startswith(f"{cid}_") for d in DOWNLOADS.iterdir() if d.is_dir()) else None
+    cdir_str = str(cdir) if cdir else ""
+
+    log_path = f"/tmp/sync_run_{cid}.log"
+    # Run full pipeline: download → bundle → ocr (vertex+tesseract) → bundle
+    # → problems → analyze → likelihood → render_graph → class_info
+    project = os.environ.get("GCP_PROJECT", "nd-canvas-ocr-1777818991")
+    name_arg = ["--name", name] if name else []
+    chain = (
+        f"set -e; cd {ROOT}; "
+        f"echo '=== [1/8] Canvas sync ==='; "
+        f"{PYTHON} download.py --course {cid} {' '.join(name_arg)}; "
+        # Resolve course dir (created by download)
+        f"CDIR=$({PYTHON} -c 'import sys,pathlib; "
+        f"d=[p for p in pathlib.Path(\"downloads\").iterdir() if p.name.startswith(f\"{cid}_\")]; "
+        f"print(d[0]) if d else sys.exit(1)'); "
+        f"echo \"course dir: $CDIR\"; "
+        f"echo '=== [2/8] Bundle (initial) ==='; "
+        f"{PYTHON} bundle.py --course-dir \"$CDIR\"; "
+        f"echo '=== [3/8] OCR Tesseract (fallback) ==='; "
+        f"{PYTHON} ocr.py --course-dir \"$CDIR\" || true; "
+        f"echo '=== [4/8] OCR Vertex Gemini (high-quality) ==='; "
+        f"{PYTHON} ocr_vertex.py --course-dir \"$CDIR\" --project {project} "
+        f"  --model gemini-2.5-pro --workers 6 --rpm 5 "
+        f"  --locations us-central1,us-east5,us-west4 || true; "
+        f"echo '=== [5/8] Re-bundle with OCR text ==='; "
+        f"{PYTHON} bundle.py --course-dir \"$CDIR\"; "
+        f"echo '=== [6/8] Extract problems + analyze ==='; "
+        f"{PYTHON} problems.py --course-dir \"$CDIR\"; "
+        f"{PYTHON} analyze.py --course-dir \"$CDIR\"; "
+        f"{PYTHON} likelihood.py --course-dir \"$CDIR\"; "
+        f"echo '=== [7/8] Render dependency graph ==='; "
+        f"{PYTHON} render_graph.py --course-dir \"$CDIR\" || true; "
+        f"echo '=== [8/8] Generate class info ==='; "
+        f"{PYTHON} class_info.py --course-dir \"$CDIR\" --rebuild || true; "
+        f"echo '=== DONE ==='"
+    )
     subprocess.Popen(
-        args, cwd=ROOT,
-        stdout=open(f"/tmp/sync_run_{cid}.log", "w"),
+        ["bash", "-c", chain],
+        cwd=ROOT,
+        env={**os.environ, "GCP_PROJECT": project, "USE_BACKEND": "gemini"},
+        stdout=open(log_path, "w"),
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
-    messages.info(request, f"Sync started for course {cid}. Watch progress on the Sync page.")
+    messages.info(request,
+        f"Full re-sync pipeline started for course {cid}. "
+        "Watch on the Sync page. Stages: download → bundle → OCR → re-bundle "
+        "→ problems → analyze → likelihood → graph → class info.")
     return redirect("ui:sync_view", cid=cid)
 
 
@@ -691,10 +731,29 @@ def sync_view(request, cid: int):
 
 def sync_status(request, cid: int):
     log = Path(f"/tmp/sync_log_{cid}.json")
-    if not log.exists():
+    pipeline_log = Path(f"/tmp/sync_run_{cid}.log")
+    if not log.exists() and not pipeline_log.exists():
         return HttpResponse(json.dumps({"error": "no sync started"}),
                             content_type="application/json", status=404)
-    return HttpResponse(log.read_text(), content_type="application/json")
+    data = {}
+    if log.exists():
+        try:
+            data = json.loads(log.read_text())
+        except Exception:
+            data = {}
+    if pipeline_log.exists():
+        text = pipeline_log.read_text()
+        # Detect current stage
+        stages = ["[1/8]", "[2/8]", "[3/8]", "[4/8]", "[5/8]",
+                  "[6/8]", "[7/8]", "[8/8]", "DONE"]
+        last_stage = ""
+        for s in stages:
+            if s in text:
+                last_stage = s
+        data["pipeline_stage"] = last_stage or "starting"
+        data["pipeline_finished"] = "=== DONE ===" in text
+        data["pipeline_tail"] = "\n".join(text.splitlines()[-15:])
+    return HttpResponse(json.dumps(data), content_type="application/json")
 
 
 def sync_errors(request, cid: int):
@@ -749,6 +808,30 @@ def build_class_info(request, cid: int):
     else:
         messages.error(request, f"Failed: {out}")
     return redirect("ui:class_info", cid=cid)
+
+
+def calendar_status(request, cid: int):
+    log_path = Path(f"/tmp/calendar_sync_{cid}.log")
+    if not log_path.exists():
+        return HttpResponse(json.dumps({"error": "no run yet"}),
+                            content_type="application/json", status=404)
+    text = log_path.read_text()
+    created = text.count("CREATED ")
+    updated = text.count("UPDATED ")
+    failed = text.count("FAIL ")
+    total_match = re.search(r"Found (\d+) unique events", text)
+    total = int(total_match.group(1)) if total_match else 0
+    finished = ("Done." in text or
+                (created + updated + failed) >= total > 0 or
+                "INSUFFICIENT" in text.upper())
+    scope_missing = "insufficient authentication scopes" in text.lower()
+    api_disabled = "has not been used" in text.lower() or "accessnotconfigured" in text.lower()
+    return HttpResponse(json.dumps({
+        "total": total, "created": created, "updated": updated, "failed": failed,
+        "finished": finished, "scope_missing": scope_missing,
+        "api_disabled": api_disabled,
+        "tail": "\n".join(text.splitlines()[-15:]),
+    }), content_type="application/json")
 
 
 @require_POST
@@ -823,6 +906,17 @@ def calendar_preview(request, cid: int):
 def calendar_sync_run(request, cid: int):
     cdir = _course_dir_for(cid)
     cal_id = request.POST.get("calendar_id", "").strip() or "primary"
+    log_path = f"/tmp/calendar_sync_{cid}.log"
+    if request.headers.get("X-Requested-With") == "fetch":
+        # Async mode: spawn detached, return immediately
+        subprocess.Popen(
+            [PYTHON, "calendar_sync.py", "--course-dir", str(cdir), "--calendar", cal_id],
+            cwd=ROOT,
+            stdout=open(log_path, "w"),
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        return HttpResponse(json.dumps({"started": True}), content_type="application/json")
     code, out = _run([PYTHON, "calendar_sync.py", "--course-dir", str(cdir),
                       "--calendar", cal_id])
     created = out.count("CREATED ")

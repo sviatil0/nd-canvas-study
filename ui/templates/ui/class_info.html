@@ -10,10 +10,10 @@
       <button class="btn btn-sm btn-outline-primary">{% if have_info %}Regenerate{% else %}Generate{% endif %}</button>
     </form>
     <button class="btn btn-sm btn-outline-info" id="cal-preview-btn">Preview events</button>
-    <form method="post" action="{% url 'ui:calendar_sync_run' cid %}" class="d-flex gap-2 align-items-center">{% csrf_token %}
+    <form id="cal-push-form" class="d-flex gap-2 align-items-center">{% csrf_token %}
       <input class="form-control form-control-sm" name="calendar_id"
              style="width:220px;" value="soleksii@nd.edu" placeholder="your calendar email">
-      <button class="btn btn-sm btn-success" title="Push events directly via service account">Push to Calendar</button>
+      <button class="btn btn-sm btn-success" type="submit" title="Push events directly via service account">Push to Calendar</button>
     </form>
     <form method="post" action="{% url 'ui:calendar_ics_build' cid %}" class="d-inline">{% csrf_token %}
       <button class="btn btn-sm btn-outline-success" title="Generate .ics file as fallback">Build .ics</button>
@@ -28,6 +28,19 @@
   scroll to <em>Share with specific people or groups</em> → Add people →
   <code>canvas-cal@nd-canvas-ocr-1777818991.iam.gserviceaccount.com</code> →
   permission <em>Make changes to events</em> → Send.
+</div>
+
+<div id="cal-status" class="card mb-3 d-none">
+  <div class="card-body py-2">
+    <div class="d-flex justify-content-between mb-1">
+      <strong>Calendar push</strong>
+      <span id="cal-status-summary" class="text-muted small"></span>
+    </div>
+    <div class="progress mb-2" style="height:10px;">
+      <div id="cal-status-bar" class="progress-bar bg-success" style="width:0%;"></div>
+    </div>
+    <pre id="cal-status-tail" style="background:#1e1e1e; color:#dcdcdc; padding:6px; border-radius:4px; max-height:160px; overflow:auto; font-size:11px; margin:0;"></pre>
+  </div>
 </div>
 
 <div id="cal-preview" class="card mb-3 d-none">
@@ -107,6 +120,59 @@ document.getElementById('cal-clear').addEventListener('click', () => {
   wrap.style.display = 'none';
   iframe.src = '';
   localStorage.removeItem(CAL_KEY);
+});
+
+// Async Push to Calendar with live status
+const pushForm = document.getElementById('cal-push-form');
+const calStatusCard = document.getElementById('cal-status');
+const calStatusBar = document.getElementById('cal-status-bar');
+const calStatusSummary = document.getElementById('cal-status-summary');
+const calStatusTail = document.getElementById('cal-status-tail');
+const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.split('=')[1] || '';
+
+async function pollCalStatus() {
+  try {
+    const r = await fetch("{% url 'ui:calendar_status' cid %}");
+    if (r.status === 404) return false;
+    const d = await r.json();
+    const done = d.created + d.updated + d.failed;
+    const pct = d.total ? Math.round(100 * done / d.total) : 0;
+    calStatusBar.style.width = pct + '%';
+    calStatusBar.className = 'progress-bar ' + (d.failed ? 'bg-warning' : 'bg-success');
+    calStatusSummary.textContent =
+      d.created + ' created · ' + d.updated + ' updated · ' + d.failed + ' failed · ' +
+      done + '/' + d.total + (d.scope_missing ? ' — SCOPE MISSING' : '') +
+      (d.api_disabled ? ' — API DISABLED' : '');
+    calStatusTail.textContent = d.tail || '';
+    return d.finished;
+  } catch (e) {
+    calStatusTail.textContent = 'status fetch failed: ' + e;
+    return false;
+  }
+}
+
+pushForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(pushForm);
+  calStatusCard.classList.remove('d-none');
+  calStatusBar.style.width = '5%';
+  calStatusSummary.textContent = 'starting…';
+  calStatusTail.textContent = '';
+  try {
+    await fetch("{% url 'ui:calendar_sync_run' cid %}", {
+      method: 'POST',
+      headers: {'X-CSRFToken': csrf, 'X-Requested-With': 'fetch'},
+      body: fd,
+    });
+  } catch (err) {
+    calStatusTail.textContent = 'request failed: ' + err;
+    return;
+  }
+  // Poll
+  const id = setInterval(async () => {
+    const finished = await pollCalStatus();
+    if (finished) clearInterval(id);
+  }, 1500);
 });
 
 document.getElementById('cal-preview-btn').addEventListener('click', async () => {
