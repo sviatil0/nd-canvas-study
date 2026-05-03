@@ -8,7 +8,7 @@
 <div class="row row-cols-2 row-cols-md-3 row-cols-lg-6 g-2 mb-4">
   <div class="col">
     <form method="post" action="{% url 'ui:sync_course' cid %}">{% csrf_token %}
-      <button class="btn btn-secondary w-100">Re-sync from Canvas</button>
+      <button class="btn btn-success w-100" title="Full pipeline: download → bundle → OCR → analyze → graph → class info">🔄 Prep all (full pipeline)</button>
     </form>
   </div>
   <div class="col">
