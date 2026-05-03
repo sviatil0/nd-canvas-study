@@ -29,6 +29,13 @@
 
 <div class="card mt-4">
   <div class="card-body">
+    <h5 class="card-title">Errors triaged</h5>
+    <div id="errors-summary" class="small"></div>
+  </div>
+</div>
+
+<div class="card mt-4">
+  <div class="card-body">
     <h5 class="card-title">Latest assets <small class="text-muted">(newest first)</small></h5>
     <input class="form-control form-control-sm mb-2" id="asset-filter" placeholder="filter by source / name / status">
     <div id="assets" style="max-height:60vh; overflow:auto;" class="small font-monospace"></div>
@@ -133,7 +140,63 @@ function renderAssets() {
 }
 
 document.getElementById('asset-filter').addEventListener('input', renderAssets);
+async function refreshErrors() {
+  try {
+    const r = await fetch("{% url 'ui:sync_errors' cid %}");
+    if (r.status === 404) return;
+    const d = await r.json();
+    const c = document.getElementById('errors-summary');
+    c.replaceChildren();
+    if (d.total === 0) {
+      c.textContent = 'No errors. ✓';
+      return;
+    }
+    const summary = document.createElement('div');
+    summary.className = 'mb-2';
+    const crit = document.createElement('span');
+    crit.className = 'badge bg-danger me-2';
+    crit.textContent = d.critical.length + ' critical';
+    summary.appendChild(crit);
+    const rec = document.createElement('span');
+    rec.className = 'badge bg-warning text-dark me-2';
+    rec.textContent = d.recoverable.length + ' recoverable';
+    summary.appendChild(rec);
+    const ig = document.createElement('span');
+    ig.className = 'badge bg-secondary me-2';
+    ig.textContent = d.ignore.length + ' safe to skip';
+    summary.appendChild(ig);
+    c.appendChild(summary);
+    function block(label, items, color) {
+      if (!items.length) return;
+      const head = document.createElement('div');
+      head.className = 'mt-2 fw-bold ' + color;
+      head.textContent = label;
+      c.appendChild(head);
+      items.slice(0, 30).forEach(e => {
+        const row = document.createElement('div');
+        row.className = 'font-monospace small ps-2';
+        row.textContent = '· [' + e.kind + '] ' + (e.source || '') + ' — ' + e.reason
+                          + (e.note ? '  (' + e.note.slice(0, 80) + ')' : '');
+        c.appendChild(row);
+      });
+      if (items.length > 30) {
+        const more = document.createElement('div');
+        more.className = 'text-muted small ps-2';
+        more.textContent = '... and ' + (items.length - 30) + ' more';
+        c.appendChild(more);
+      }
+    }
+    block('CRITICAL — investigate', d.critical, 'text-danger');
+    block('RECOVERABLE — re-auth or retry', d.recoverable, 'text-warning');
+    block('SAFE TO SKIP', d.ignore, 'text-muted');
+  } catch (e) {
+    document.getElementById('errors-summary').textContent = 'errors fetch failed: ' + e;
+  }
+}
+
 refresh();
+refreshErrors();
 setInterval(refresh, 2000);
+setInterval(refreshErrors, 5000);
 </script>
 {% endblock %}

@@ -641,6 +641,60 @@ def sync_status(request, cid: int):
     return HttpResponse(log.read_text(), content_type="application/json")
 
 
+def sync_errors(request, cid: int):
+    """Classify errors from sync log: critical / recoverable / safe-to-ignore."""
+    log = Path(f"/tmp/sync_log_{cid}.json")
+    if not log.exists():
+        return HttpResponse(json.dumps({"error": "no sync"}),
+                            content_type="application/json", status=404)
+    data = json.loads(log.read_text())
+    errors = data.get("errors", [])
+    classified = {"critical": [], "recoverable": [], "ignore": []}
+    for e in errors:
+        note = (e.get("note") or "").lower()
+        kind = e.get("kind") or ""
+        if "401" in note or "unauthorized" in note:
+            classified["recoverable"].append({**e, "reason": "Canvas session expired — re-auth"})
+        elif "403" in note or "forbidden" in note or "no_url" in note:
+            classified["ignore"].append({**e, "reason": "Instructor restricted this asset (locked/private)"})
+        elif "404" in note or "not found" in note:
+            classified["ignore"].append({**e, "reason": "Asset doesn't exist on Canvas"})
+        elif "timeout" in note or "connection" in note:
+            classified["recoverable"].append({**e, "reason": "Network glitch — retry"})
+        elif kind in ("page", "file") and "fail" in (e.get("note") or "").lower():
+            classified["critical"].append({**e, "reason": "Real failure — investigate"})
+        else:
+            classified["ignore"].append({**e, "reason": "Likely benign skip"})
+    return HttpResponse(json.dumps({
+        "total": len(errors),
+        "critical": classified["critical"],
+        "recoverable": classified["recoverable"],
+        "ignore": classified["ignore"],
+    }, indent=2), content_type="application/json")
+
+
+def class_info(request, cid: int):
+    cdir = _course_dir_for(cid)
+    f = cdir / "bundles" / "CLASS_INFO.md"
+    md = f.read_text() if f.exists() else ""
+    return render(request, "ui/class_info.html", {
+        "cid": cid,
+        "info_md": md,
+        "have_info": bool(md.strip()),
+    })
+
+
+@require_POST
+def build_class_info(request, cid: int):
+    cdir = _course_dir_for(cid)
+    code, out = _run([PYTHON, "class_info.py", "--course-dir", str(cdir), "--rebuild"])
+    if code == 0:
+        messages.success(request, "Class info generated.")
+    else:
+        messages.error(request, f"Failed: {out}")
+    return redirect("ui:class_info", cid=cid)
+
+
 def jobs_status(request, cid: int):
     """Return status of background OCR job by parsing /tmp/ocr_*.log files."""
     import re

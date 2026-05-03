@@ -1,0 +1,41 @@
+{% extends "ui/base.html" %}
+{% block title %}Class info · {{ cid }}{% endblock %}
+{% block content %}
+<a class="btn btn-sm btn-outline-secondary mb-3" href="{% url 'ui:course_detail' cid %}">&larr; back</a>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2>Class info</h2>
+  <form method="post" action="{% url 'ui:build_class_info' cid %}">{% csrf_token %}
+    <button class="btn btn-sm btn-outline-primary">{% if have_info %}Regenerate{% else %}Generate{% endif %}</button>
+  </form>
+</div>
+
+{% if not have_info %}
+<div class="alert alert-secondary">No class info yet. Click <strong>Generate</strong> — pulls all
+announcements + syllabus pages + assignment descriptions and asks Gemini to extract
+exam logistics, grading, policies, dates, and warnings.</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-body">
+    <div id="info-md"></div>
+    <template id="info-src">{{ info_md }}</template>
+  </div>
+</div>
+
+<script>
+(function () {
+  const tpl = document.getElementById('info-src');
+  const target = document.getElementById('info-md');
+  if (!tpl || !target) return;
+  const decoder = document.createElement('textarea');
+  decoder.textContent = tpl.textContent;
+  const raw = decoder.value || tpl.textContent;
+  if (!raw.trim()) return;
+  window.markedReady.then(() => {
+    window.renderMarkdownInto(target, raw);
+    if (window.renderMathInElement) renderMathIn(target);
+  });
+})();
+</script>
+{% endblock %}

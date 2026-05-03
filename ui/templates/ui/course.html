@@ -47,6 +47,12 @@
   <div class="col">
     <a class="btn btn-outline-secondary w-100" href="{% url 'ui:jobs' cid %}">Jobs</a>
   </div>
+  <div class="col">
+    <a class="btn btn-warning w-100" href="{% url 'ui:class_info' cid %}">Class info</a>
+  </div>
+  <div class="col">
+    <a class="btn btn-outline-info w-100" href="{% url 'ui:sync_view' cid %}">Sync status</a>
+  </div>
 </div>
 
 {% if overall_total %}
