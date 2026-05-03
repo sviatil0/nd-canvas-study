@@ -723,13 +723,24 @@ def calendar_preview(request, cid: int):
 def calendar_sync_run(request, cid: int):
     cdir = _course_dir_for(cid)
     code, out = _run([PYTHON, "calendar_sync.py", "--course-dir", str(cdir)])
-    if code == 0:
-        # Pull a count from output for nicer message
-        created = out.count("CREATED")
-        updated = out.count("UPDATED")
-        messages.success(request, f"Calendar synced: {created} created, {updated} updated.")
+    created = out.count("CREATED ")
+    updated = out.count("UPDATED ")
+    failed = out.count("FAIL ")
+    if "insufficient authentication scopes" in out.lower():
+        messages.error(request,
+            "Calendar scope missing. In your terminal run: "
+            "gcloud auth application-default login "
+            "--scopes=https://www.googleapis.com/auth/cloud-platform,"
+            "https://www.googleapis.com/auth/calendar.events")
+    elif failed and not (created or updated):
+        messages.error(request, f"Calendar sync: {failed} failed. Tail: {out[-800:]}")
+    elif code == 0 or created or updated:
+        msg = f"Calendar synced: {created} created, {updated} updated"
+        if failed:
+            msg += f", {failed} failed"
+        messages.success(request, msg + ".")
     else:
-        messages.error(request, f"Calendar sync failed: {out[-1500:]}")
+        messages.error(request, f"Calendar sync failed (code {code}): {out[-1500:]}")
     return redirect("ui:class_info", cid=cid)
 
 
