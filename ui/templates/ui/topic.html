@@ -2,11 +2,178 @@
 {% block title %}{{ topic }} · {{ cid }}{% endblock %}
 {% block content %}
 <a class="btn btn-sm btn-outline-secondary mb-3" href="{% url 'ui:course_detail' cid %}">&larr; back to course</a>
-<h2>{{ topic }}</h2>
-<p class="text-muted">{{ problems|length }} problems found in exam/practice material</p>
+
+<div class="d-flex justify-content-between align-items-start mb-2">
+  <div>
+    <h2>{{ info.label|default:topic }}</h2>
+    {% if info.ch %}<p class="text-muted">Chapter {{ info.ch }} · key <code>{{ topic }}</code></p>{% endif %}
+  </div>
+  <form method="post" action="{% url 'ui:build_summary' cid topic %}">{% csrf_token %}
+    <button class="btn btn-sm btn-outline-primary">{% if have_summary %}Regenerate summary{% else %}Generate summary{% endif %}</button>
+  </form>
+</div>
+
+{% if prereqs or dependents %}
+<div class="row g-2 mb-3">
+  {% if prereqs %}
+  <div class="col-md-6">
+    <div class="card border-info">
+      <div class="card-body py-2">
+        <small class="text-muted">Prerequisites</small><br>
+        {% for k, v in prereqs %}
+          <a class="badge bg-info text-decoration-none me-1" href="{% url 'ui:topic_detail' cid k %}">Ch{{ v.ch }} · {{ v.label }}</a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+  {% if dependents %}
+  <div class="col-md-6">
+    <div class="card border-warning">
+      <div class="card-body py-2">
+        <small class="text-muted">Builds toward</small><br>
+        {% for k, v in dependents %}
+          <a class="badge bg-warning text-dark text-decoration-none me-1" href="{% url 'ui:topic_detail' cid k %}">Ch{{ v.ch }} · {{ v.label }}</a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if have_summary %}
+<div class="card mb-4">
+  <div class="card-body">
+    <div id="summary-md"></div>
+    <template id="summary-src">{{ summary_md }}</template>
+  </div>
+</div>
+<div id="selection-toolbar" style="position:absolute; display:none; z-index:1000;" class="btn-group shadow">
+  <button class="btn btn-sm btn-primary" id="sel-ask">Ask…</button>
+  <button class="btn btn-sm btn-success" id="sel-expand">Add details</button>
+</div>
+
+<script>
+const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.split('=')[1] || '';
+(function () {
+  const tpl = document.getElementById('summary-src');
+  const target = document.getElementById('summary-md');
+  if (!tpl || !target) return;
+  const decoder = document.createElement('textarea');
+  decoder.innerHTML = tpl.innerHTML;
+  const raw = decoder.value;
+  window.markedReady.then(() => {
+    target.innerHTML = window.marked.parse(raw);
+    renderMathIn(target);
+  });
+
+  const tb = document.getElementById('selection-toolbar');
+  let lastRange = null;
+  let lastSelection = '';
+
+  function hideToolbar() { tb.style.display = 'none'; }
+  function showToolbarFromSelection() {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) return hideToolbar();
+    const text = sel.toString().trim();
+    if (text.length < 4) return hideToolbar();
+    if (!target.contains(sel.anchorNode) || !target.contains(sel.focusNode)) return hideToolbar();
+    lastRange = sel.getRangeAt(0).cloneRange();
+    lastSelection = text;
+    const rect = sel.getRangeAt(0).getBoundingClientRect();
+    tb.style.top = (window.scrollY + rect.bottom + 6) + 'px';
+    tb.style.left = (window.scrollX + rect.left) + 'px';
+    tb.style.display = '';
+  }
+
+  document.addEventListener('mouseup', showToolbarFromSelection);
+  document.addEventListener('keyup', showToolbarFromSelection);
+  document.addEventListener('mousedown', (e) => {
+    if (!tb.contains(e.target)) hideToolbar();
+  });
+
+  function insertResponse(html) {
+    const wrap = document.createElement('div');
+    wrap.className = 'alert alert-light border border-primary mt-2';
+    wrap.style.borderLeftWidth = '4px';
+    const head = document.createElement('div');
+    head.className = 'small text-muted mb-1';
+    head.innerHTML = '↳ Follow-up about: <em></em>';
+    head.querySelector('em').textContent = '"' + lastSelection.slice(0, 80) + (lastSelection.length > 80 ? '…' : '') + '"';
+    wrap.appendChild(head);
+    const body = document.createElement('div');
+    body.innerHTML = html;
+    wrap.appendChild(body);
+    if (lastRange) {
+      // Insert after the selection's containing block element
+      let node = lastRange.endContainer;
+      while (node && node.parentNode !== target) node = node.parentNode;
+      if (node && node.parentNode === target) {
+        node.parentNode.insertBefore(wrap, node.nextSibling);
+      } else {
+        target.appendChild(wrap);
+      }
+    } else {
+      target.appendChild(wrap);
+    }
+    renderMathIn(wrap);
+  }
+
+  async function callFollowup(mode, question) {
+    if (!lastSelection) return;
+    hideToolbar();
+    const placeholder = document.createElement('div');
+    placeholder.className = 'alert alert-info mt-2';
+    placeholder.textContent = mode === 'expand' ? 'Adding more detail…' : 'Asking…';
+    target.appendChild(placeholder);
+    const fd = new FormData();
+    fd.append('selection', lastSelection);
+    fd.append('mode', mode);
+    if (question) fd.append('question', question);
+    try {
+      const r = await fetch("{% url 'ui:followup' cid topic %}", {
+        method: 'POST',
+        headers: {'X-CSRFToken': csrf},
+        body: fd,
+      });
+      const data = await r.json();
+      placeholder.remove();
+      if (data.error) {
+        const err = document.createElement('div');
+        err.className = 'alert alert-danger';
+        err.textContent = 'Error: ' + data.error;
+        target.appendChild(err);
+        return;
+      }
+      const html = window.marked ? window.marked.parse(data.answer || '') : data.answer;
+      insertResponse(html);
+    } catch (e) {
+      placeholder.remove();
+      const err = document.createElement('div');
+      err.className = 'alert alert-danger';
+      err.textContent = 'Request failed: ' + e;
+      target.appendChild(err);
+    }
+  }
+
+  document.getElementById('sel-expand').addEventListener('click', () => callFollowup('expand'));
+  document.getElementById('sel-ask').addEventListener('click', () => {
+    const q = window.prompt('Your question about the selection:');
+    if (q && q.trim()) callFollowup('ask', q.trim());
+  });
+})();
+</script>
+{% else %}
+<div class="alert alert-secondary">No concept summary yet. Click <strong>Generate summary</strong> above (uses local Claude, ~30s).</div>
+{% endif %}
+
+<hr class="my-4">
+<h3>Problems from exam/practice material</h3>
+<p class="text-muted">{{ problems|length }} problems</p>
 
 {% if not problems %}
-  <div class="alert alert-warning">No problems indexed for this topic. Try the <a href="{% url 'ui:ask' cid %}?q={{ topic }}">semantic search</a>.</div>
+  <div class="alert alert-warning">No exam problems indexed for this topic. Try the <a href="{% url 'ui:ask' cid %}?q={{ topic }}">semantic search</a>.</div>
 {% endif %}
 
 {% for p in problems %}
@@ -36,8 +203,6 @@
 {% endfor %}
 
 <script>
-const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.split('=')[1] || '';
-
 function setStatus(target, kind, text) {
   target.replaceChildren();
   const box = document.createElement('div');
@@ -50,11 +215,9 @@ function setAnswer(target, data) {
   target.replaceChildren();
   const wrap = document.createElement('div');
   wrap.className = 'alert alert-light';
-
   const head = document.createElement('strong');
   head.textContent = 'Answer (' + data.model + ')';
   wrap.appendChild(head);
-
   const body = document.createElement('div');
   body.className = 'answer-md mt-2';
   if (window.marked) {
@@ -66,13 +229,11 @@ function setAnswer(target, data) {
     body.appendChild(pre);
   }
   wrap.appendChild(body);
-
   const meta = document.createElement('div');
   meta.className = 'text-muted small mt-2';
   meta.textContent = 'in=' + data.input_tokens + ' out=' + data.output_tokens
                    + ' cache_read=' + (data.cache_read || 0);
   wrap.appendChild(meta);
-
   target.appendChild(wrap);
   if (window.renderMathInElement) renderMathIn(body);
 }
@@ -87,16 +248,11 @@ document.querySelectorAll('.solve-btn').forEach(btn => {
     fd.append('topic', btn.dataset.topic);
     try {
       const r = await fetch("{% url 'ui:solve_problem' cid %}", {
-        method: 'POST',
-        headers: {'X-CSRFToken': csrf},
-        body: fd,
+        method: 'POST', headers: {'X-CSRFToken': csrf}, body: fd,
       });
       const data = await r.json();
-      if (data.error) {
-        setStatus(target, 'danger', 'Error: ' + data.error);
-      } else {
-        setAnswer(target, data);
-      }
+      if (data.error) setStatus(target, 'danger', 'Error: ' + data.error);
+      else setAnswer(target, data);
     } catch (e) {
       setStatus(target, 'danger', 'Request failed: ' + e);
     } finally {

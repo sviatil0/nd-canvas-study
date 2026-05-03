@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 cookies.json
+panopto_cookies.json
 downloads/
 *.pyc
 .env

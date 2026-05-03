@@ -9,6 +9,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 ROOT = Path(settings.BASE_DIR)
@@ -199,10 +200,132 @@ def topic_detail(request, cid: int, topic: str):
         raise Http404("run problems.py first")
     data = json.loads(problems_file.read_text())
     problems = data.get(topic, [])
+
+    sys.path.insert(0, str(ROOT))
+    from topic_graph import GRAPH, prereqs_of, dependents_of
+
+    info = GRAPH.get(topic, {})
+    summary_file = cdir / "bundles" / "topics" / f"{topic}.md"
+    summary_md = summary_file.read_text() if summary_file.exists() else ""
+    # Replace TOPIC_LINK_PLACEHOLDER:<key> with real URLs
+    if summary_md:
+        for key in GRAPH:
+            summary_md = summary_md.replace(
+                f"TOPIC_LINK_PLACEHOLDER:{key}",
+                reverse("ui:topic_detail", args=[cid, key]),
+            )
+
     return render(request, "ui/topic.html", {
         "cid": cid,
         "topic": topic,
         "problems": problems,
+        "info": info,
+        "prereqs": [(k, GRAPH[k]) for k in prereqs_of(topic) if k in GRAPH],
+        "dependents": [(k, GRAPH[k]) for k in dependents_of(topic)],
+        "summary_md": summary_md,
+        "have_summary": bool(summary_md),
+    })
+
+
+@require_POST
+def build_summary(request, cid: int, topic: str):
+    cdir = _course_dir_for(cid)
+    code, out = _run([PYTHON, "summarize_topics.py", "--course-dir", str(cdir), "--topic", topic, "--rebuild"])
+    if code == 0:
+        messages.success(request, f"Summary generated for {topic}.")
+    else:
+        messages.error(request, f"Summary failed: {out}")
+    return redirect("ui:topic_detail", cid=cid, topic=topic)
+
+
+def graph_view(request, cid: int):
+    sys.path.insert(0, str(ROOT))
+    from topic_graph import mermaid, GRAPH
+    return render(request, "ui/graph.html", {
+        "cid": cid,
+        "mermaid": mermaid(),
+        "topics": GRAPH,
+    })
+
+
+@require_POST
+def followup(request, cid: int, topic: str):
+    cdir = _course_dir_for(cid)
+    selection = request.POST.get("selection", "").strip()
+    mode = request.POST.get("mode", "ask").strip()  # "ask" | "expand"
+    user_q = request.POST.get("question", "").strip()
+    if not selection:
+        return HttpResponse(json.dumps({"error": "no selection"}), status=400, content_type="application/json")
+
+    summary_file = cdir / "bundles" / "topics" / f"{topic}.md"
+    summary_md = summary_file.read_text() if summary_file.exists() else ""
+
+    sys.path.insert(0, str(ROOT))
+    from solver import _gather_context
+    context = _gather_context(cdir, topic, max_chars=20000)
+
+    if mode == "expand":
+        instruction = (
+            "The student selected the snippet below from the topic summary and wants MORE DETAIL. "
+            "Provide additional context, edge cases, intuition, and one extra worked micro-example. "
+            "Do NOT rewrite or contradict the selection — only add. Keep under 250 words. "
+            "Use Markdown + LaTeX math ($...$ inline, $$...$$ block)."
+        )
+    else:
+        instruction = (
+            "The student selected the snippet below and asks a clarifying follow-up question. "
+            "Answer the question concisely and directly with respect to the selection. "
+            "Cite specific formulas. Keep under 250 words. Use Markdown + LaTeX."
+        )
+
+    prompt = (
+        f"Topic: {topic}\n\n"
+        f"--- TOPIC SUMMARY (for context) ---\n{summary_md}\n\n"
+        f"--- COURSE REFERENCE ---\n{context}\n\n"
+        f"--- SELECTED SNIPPET ---\n{selection}\n\n"
+        f"--- TASK ---\n{instruction}"
+    )
+    if user_q:
+        prompt += f"\n\n--- STUDENT QUESTION ---\n{user_q}"
+
+    import shutil, subprocess
+    if not shutil.which("claude"):
+        return HttpResponse(json.dumps({"error": "claude CLI missing"}), status=500, content_type="application/json")
+    try:
+        proc = subprocess.run(["claude", "-p", prompt], capture_output=True, text=True, timeout=180)
+    except subprocess.TimeoutExpired:
+        return HttpResponse(json.dumps({"error": "timeout"}), status=504, content_type="application/json")
+    if proc.returncode != 0:
+        return HttpResponse(json.dumps({"error": proc.stderr[:300]}), status=500, content_type="application/json")
+    return HttpResponse(json.dumps({"answer": proc.stdout.strip()}), content_type="application/json")
+
+
+def graph_png(request, cid: int):
+    cdir = _course_dir_for(cid)
+    png = cdir / "bundles" / "topic_graph.png"
+    if not png.exists():
+        raise Http404("run render_graph.py first")
+    return FileResponse(open(png, "rb"), content_type="image/png")
+
+
+@require_POST
+def render_graph_png(request, cid: int):
+    cdir = _course_dir_for(cid)
+    code, out = _run([PYTHON, "render_graph.py", "--course-dir", str(cdir)])
+    if code == 0:
+        messages.success(request, "Graph PNG rendered.")
+    else:
+        messages.error(request, f"Render failed: {out}")
+    return redirect("ui:graph_view", cid=cid)
+
+
+def path_view(request, cid: int):
+    sys.path.insert(0, str(ROOT))
+    from topic_graph import topo_sort, GRAPH
+    order = topo_sort()
+    return render(request, "ui/path.html", {
+        "cid": cid,
+        "order": [(k, GRAPH[k]) for k in order],
     })
 
 

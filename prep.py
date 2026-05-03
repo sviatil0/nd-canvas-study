@@ -115,6 +115,8 @@ def main() -> int:
     ap.add_argument("--skip-bundle", action="store_true")
     ap.add_argument("--skip-analyze", action="store_true")
     ap.add_argument("--skip-vector", action="store_true", help="skip building vector index")
+    ap.add_argument("--with-panopto", action="store_true", help="also pull Panopto transcripts (interactive login)")
+    ap.add_argument("--with-summaries", action="store_true", help="also generate concept summaries (slow)")
     ap.add_argument("--serve", action="store_true", help="launch Django UI after")
     ap.add_argument("--ask", help="after pipeline, run a semantic query against the index")
     args = ap.parse_args()
@@ -144,8 +146,13 @@ def main() -> int:
     if not args.skip_analyze:
         run([PYTHON, "analyze.py", "--course-dir", str(cdir)])
     run([PYTHON, "problems.py", "--course-dir", str(cdir)])
+    if args.with_panopto:
+        run([PYTHON, "panopto.py", "--course-dir", str(cdir)])
     if not args.skip_vector:
-        run([PYTHON, "vectorize.py", "--course-dir", str(cdir)])
+        run([PYTHON, "vectorize.py", "--course-dir", str(cdir), "--rebuild"])
+    if args.with_summaries:
+        run([PYTHON, "summarize_topics.py", "--course-dir", str(cdir)])
+    run([PYTHON, "render_graph.py", "--course-dir", str(cdir)], check=False)
 
     plan = cdir / "bundles" / "STUDY_PLAN.md"
     gap = cdir / "bundles" / "topic_gap_report.md"

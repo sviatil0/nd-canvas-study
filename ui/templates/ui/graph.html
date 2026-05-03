@@ -1,0 +1,87 @@
+{% extends "ui/base.html" %}
+{% block title %}Topic graph · {{ cid }}{% endblock %}
+{% block content %}
+<a class="btn btn-sm btn-outline-secondary mb-3" href="{% url 'ui:course_detail' cid %}">&larr; back</a>
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2>Topic dependency graph</h2>
+  <a class="btn btn-outline-primary" href="{% url 'ui:path_view' cid %}">Sequential study path &rarr;</a>
+</div>
+
+<ul class="nav nav-tabs mb-3" role="tablist">
+  <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#mermaid-tab" type="button">Mermaid (interactive)</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#networkx-tab" type="button">NetworkX (PNG)</button></li>
+</ul>
+<div class="tab-content mb-4">
+  <div class="tab-pane fade show active" id="mermaid-tab">
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex justify-content-between mb-2">
+          <small class="text-muted">Drag to pan · scroll to zoom · double-click to reset</small>
+          <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-secondary" id="zoom-in">+</button>
+            <button class="btn btn-outline-secondary" id="zoom-out">−</button>
+            <button class="btn btn-outline-secondary" id="zoom-reset">reset</button>
+          </div>
+        </div>
+        <div id="mermaid-wrap" style="height:75vh; overflow:hidden; border:1px solid #dee2e6; background:#fafafa;">
+          <pre class="mermaid" id="mermaid-src">{{ mermaid }}</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="tab-pane fade" id="networkx-tab">
+    <div class="card"><div class="card-body">
+      <div class="d-flex justify-content-between mb-2">
+        <small class="text-muted">PNG rendered with networkx + matplotlib (chapter-grouped)</small>
+        <form method="post" action="{% url 'ui:render_graph_png' cid %}">{% csrf_token %}
+          <button class="btn btn-sm btn-outline-secondary">Regenerate PNG</button>
+        </form>
+      </div>
+      <img src="{% url 'ui:graph_png' cid %}" class="img-fluid border" alt="topic graph">
+    </div></div>
+  </div>
+</div>
+
+<h4>Click any topic</h4>
+<div class="d-flex flex-wrap gap-2">
+  {% for k, v in topics.items %}
+    <a class="btn btn-sm btn-outline-dark" href="{% url 'ui:topic_detail' cid k %}">Ch{{ v.ch }} · {{ v.label }}</a>
+  {% endfor %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: "default",
+    flowchart: { useMaxWidth: false, htmlLabels: true, nodeSpacing: 60, rankSpacing: 80 },
+  });
+  const wrap = document.getElementById('mermaid-wrap');
+  const src = document.getElementById('mermaid-src');
+  const code = src.textContent;
+  src.remove();
+  const { svg: svgString } = await mermaid.render('mermaid-svg', code);
+  // mermaid output is from our own server-rendered graph definition; parse as SVG.
+  const parsed = new DOMParser().parseFromString(svgString, 'image/svg+xml');
+  const svgEl = parsed.documentElement;
+  svgEl.removeAttribute('width');
+  svgEl.removeAttribute('height');
+  svgEl.style.width = '100%';
+  svgEl.style.height = '100%';
+  wrap.appendChild(svgEl);
+  const panZoom = svgPanZoom(svgEl, {
+    zoomEnabled: true,
+    controlIconsEnabled: false,
+    fit: true,
+    center: true,
+    minZoom: 0.2,
+    maxZoom: 8,
+    zoomScaleSensitivity: 0.4,
+  });
+  document.getElementById('zoom-in').onclick  = () => panZoom.zoomIn();
+  document.getElementById('zoom-out').onclick = () => panZoom.zoomOut();
+  document.getElementById('zoom-reset').onclick = () => { panZoom.resetZoom(); panZoom.center(); panZoom.fit(); };
+  wrap.addEventListener('dblclick', () => { panZoom.resetZoom(); panZoom.center(); panZoom.fit(); });
+</script>
+{% endblock %}

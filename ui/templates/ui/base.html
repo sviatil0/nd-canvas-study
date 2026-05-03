@@ -10,18 +10,38 @@
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/marked@14/marked.min.js"></script>
   <script>
+    // Resolve when KaTeX auto-render is ready (defer scripts may not be loaded yet
+    // when inline DOMContentLoaded handlers fire).
+    window.katexReady = new Promise((resolve) => {
+      const check = () => {
+        if (window.renderMathInElement) resolve();
+        else setTimeout(check, 30);
+      };
+      check();
+    });
     function renderMathIn(el) {
-      if (!el || !window.renderMathInElement) return;
-      window.renderMathInElement(el, {
-        delimiters: [
-          {left: "$$", right: "$$", display: true},
-          {left: "$",  right: "$",  display: false},
-          {left: "\\[", right: "\\]", display: true},
-          {left: "\\(", right: "\\)", display: false},
-        ],
-        throwOnError: false,
+      if (!el) return;
+      window.katexReady.then(() => {
+        window.renderMathInElement(el, {
+          delimiters: [
+            {left: "$$", right: "$$", display: true},
+            {left: "\\[", right: "\\]", display: true},
+            {left: "\\(", right: "\\)", display: false},
+            {left: "$",  right: "$",  display: false},
+          ],
+          throwOnError: false,
+          ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
+        });
       });
     }
+    // Likewise wait for marked.
+    window.markedReady = new Promise((resolve) => {
+      const check = () => {
+        if (window.marked) resolve();
+        else setTimeout(check, 30);
+      };
+      check();
+    });
     document.addEventListener("DOMContentLoaded", () => renderMathIn(document.body));
   </script>
 </head>

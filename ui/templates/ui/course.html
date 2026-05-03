@@ -29,6 +29,12 @@
   <div class="col">
     <a class="btn btn-info w-100" href="{% url 'ui:ask' cid %}">Semantic search</a>
   </div>
+  <div class="col">
+    <a class="btn btn-dark w-100" href="{% url 'ui:graph_view' cid %}">Topic graph</a>
+  </div>
+  <div class="col">
+    <a class="btn btn-outline-dark w-100" href="{% url 'ui:path_view' cid %}">Study path</a>
+  </div>
 </div>
 
 {% if have_gap %}

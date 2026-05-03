@@ -20,4 +20,10 @@ urlpatterns = [
     path("course/<int:cid>/topic/<str:topic>/", views.topic_detail, name="topic_detail"),
     path("course/<int:cid>/snippet/<path:rel>/<int:page>/", views.snippet, name="snippet"),
     path("course/<int:cid>/solve/", views.solve_problem, name="solve_problem"),
+    path("course/<int:cid>/topic/<str:topic>/summary/build/", views.build_summary, name="build_summary"),
+    path("course/<int:cid>/graph/", views.graph_view, name="graph_view"),
+    path("course/<int:cid>/path/", views.path_view, name="path_view"),
+    path("course/<int:cid>/graph.png", views.graph_png, name="graph_png"),
+    path("course/<int:cid>/graph/render/", views.render_graph_png, name="render_graph_png"),
+    path("course/<int:cid>/topic/<str:topic>/followup/", views.followup, name="followup"),
 ]

@@ -1,0 +1,24 @@
+{% extends "ui/base.html" %}
+{% block title %}Study path · {{ cid }}{% endblock %}
+{% block content %}
+<a class="btn btn-sm btn-outline-secondary mb-3" href="{% url 'ui:course_detail' cid %}">&larr; back</a>
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2>Sequential study path</h2>
+  <a class="btn btn-outline-primary" href="{% url 'ui:graph_view' cid %}">View graph &rarr;</a>
+</div>
+<p class="text-muted">Topological order of all topics — start at the top and work down. Each topic links to its concept summary + problems + solver.</p>
+
+<ol class="list-group list-group-numbered">
+  {% for k, v in order %}
+    <li class="list-group-item d-flex justify-content-between align-items-start">
+      <div class="ms-2 me-auto">
+        <a class="fw-bold" href="{% url 'ui:topic_detail' cid k %}">{{ v.label }}</a>
+        <div class="small text-muted">key <code>{{ k }}</code> · prereqs:
+          {% for p in v.prereqs %}<code>{{ p }}</code>{% if not forloop.last %}, {% endif %}{% empty %}<em>none</em>{% endfor %}
+        </div>
+      </div>
+      <span class="badge bg-primary rounded-pill">Ch {{ v.ch }}</span>
+    </li>
+  {% endfor %}
+</ol>
+{% endblock %}

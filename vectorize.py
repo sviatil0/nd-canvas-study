@@ -65,6 +65,16 @@ def categorize(rel_path: str) -> str:
     return ""
 
 
+def iter_text_chunks(path: Path):
+    try:
+        text = path.read_text(errors="ignore")
+    except Exception as e:
+        print(f"  skip {path.name}: {e}")
+        return
+    for ci, chunk in enumerate(chunk_text(text)):
+        yield {"text": chunk, "page": 1, "chunk_idx": ci}
+
+
 def build_index(course_dir: Path) -> None:
     manifest_file = course_dir / "bundles" / "manifest.json"
     if not manifest_file.exists():
@@ -72,7 +82,6 @@ def build_index(course_dir: Path) -> None:
     manifest = {r["path"]: r["category"] for r in json.loads(manifest_file.read_text())}
 
     coll = get_collection(course_dir)
-    # Reset to keep idempotent
     try:
         coll.delete(where={"$exists": "source"})
     except Exception:
@@ -93,6 +102,22 @@ def build_index(course_dir: Path) -> None:
                 "category": category,
             })
         print(f"  indexed {rel}")
+
+    transcripts_dir = course_dir / "transcripts"
+    if transcripts_dir.exists():
+        for txt in sorted(transcripts_dir.glob("*.txt")):
+            rel = str(txt.relative_to(course_dir))
+            for c in iter_text_chunks(txt):
+                cid = f"{rel}#c{c['chunk_idx']}"
+                docs.append(c["text"])
+                ids.append(cid)
+                metas.append({
+                    "source": rel,
+                    "page": 1,
+                    "chunk": c["chunk_idx"],
+                    "category": "transcript",
+                })
+            print(f"  indexed transcript {rel}")
 
     BATCH = 200
     for i in range(0, len(docs), BATCH):
