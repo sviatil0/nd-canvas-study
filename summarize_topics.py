@@ -125,13 +125,14 @@ def gather_context(course_dir: Path, topic: str, max_chars: int = 120000) -> str
                     if cache.exists():
                         parts.append(f"=== {rel} (OCR) ===\n{cache.read_text()}")
 
-    # 3. Vector-retrieved chunks from in-class notes (broader recall)
-    if (course_dir / "chroma").exists():
-        sys.path.insert(0, str(Path(__file__).parent))
-        from vectorize import get_collection
-        coll = get_collection(course_dir)
-        label = info.get("label", topic)
+    # 3. Vector-retrieved chunks from in-class notes (skip if Chroma broken)
+    chroma_dir = course_dir / "chroma"
+    if chroma_dir.exists() and any(chroma_dir.iterdir()):
         try:
+            sys.path.insert(0, str(Path(__file__).parent))
+            from vectorize import get_collection
+            coll = get_collection(course_dir)
+            label = info.get("label", topic)
             res = coll.query(
                 query_texts=[f"{topic} {label}"],
                 n_results=20,
@@ -143,8 +144,9 @@ def gather_context(course_dir: Path, topic: str, max_chars: int = 120000) -> str
                     continue
                 seen_paths.add(tag)
                 parts.append(f"=== {meta['source']} p{meta['page']} (chunk) ===\n{doc}")
-        except Exception as e:
-            parts.append(f"[vector context fail: {e}]")
+        except Exception:
+            # Chroma broken — silently skip; chapter PDFs above provide enough context
+            pass
 
     full = "\n\n".join(parts)
     return full[:max_chars]
