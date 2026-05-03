@@ -54,13 +54,18 @@ function setAnswer(target, data) {
   const head = document.createElement('strong');
   head.textContent = 'Answer (' + data.model + ')';
   wrap.appendChild(head);
-  wrap.appendChild(document.createElement('br'));
 
-  const pre = document.createElement('pre');
-  pre.style.whiteSpace = 'pre-wrap';
-  pre.style.marginTop = '.5rem';
-  pre.textContent = data.answer || '';
-  wrap.appendChild(pre);
+  const body = document.createElement('div');
+  body.className = 'answer-md mt-2';
+  if (window.marked) {
+    body.innerHTML = window.marked.parse(data.answer || '');
+  } else {
+    const pre = document.createElement('pre');
+    pre.style.whiteSpace = 'pre-wrap';
+    pre.textContent = data.answer || '';
+    body.appendChild(pre);
+  }
+  wrap.appendChild(body);
 
   const meta = document.createElement('div');
   meta.className = 'text-muted small mt-2';
@@ -69,6 +74,7 @@ function setAnswer(target, data) {
   wrap.appendChild(meta);
 
   target.appendChild(wrap);
+  if (window.renderMathInElement) renderMathIn(body);
 }
 
 document.querySelectorAll('.solve-btn').forEach(btn => {
