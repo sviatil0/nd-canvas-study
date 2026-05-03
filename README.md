@@ -40,14 +40,24 @@ python prep.py "statistics" --ask "tukey HSD multiple comparisons"
 python prep.py "statistics" --serve           # also launch the Django UI
 ```
 
-## Setup
+## Setup (one-time)
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-playwright install firefox
-python manage.py migrate
+./setup.sh
+```
+
+Creates the venv, installs Python deps, installs Playwright Firefox, runs Django migrations, and tells you what other system tools are missing (Poppler for PDF rendering, Claude CLI).
+
+## Launch
+
+```bash
+./start.sh                       # start UI on http://127.0.0.1:8000 and open browser
+./start.sh prep "statistics"     # full pipeline for a class
+./start.sh prep "statistics" --ask "tukey HSD"
+./start.sh auth                  # re-login when cookies expire
+./start.sh stop                  # stop UI
+./start.sh status                # is UI running?
+./start.sh help                  # show all commands
 ```
 
 ## Pipeline pieces

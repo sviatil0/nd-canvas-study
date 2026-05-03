@@ -7,5 +7,6 @@ downloads/
 .env
 db.sqlite3
 .DS_Store
+.ui.pid
 */chroma/
 */_snippets/
