@@ -1132,6 +1132,10 @@ def jobs_status(request, cid: int):
         failed = len(re.findall(r"^\s*✗ \[", text, re.M))
         cost_match = re.search(r"Estimated cost: ~\$([\d.]+)", text)
         cost = float(cost_match.group(1)) if cost_match else 0.0
+        # If no explicit cost line and this looks like a summary job, estimate
+        # from chars (avg ~$0.04 per Gemini 2.5 Pro summary call)
+        if cost == 0.0 and "topic summaries" in text:
+            cost = round(0.04 * (done + failed), 2)
         rpm_match = re.search(r"@ (\d+) RPM", text)
         rpm = int(rpm_match.group(1)) if rpm_match else None
         workers_match = re.search(r"(\d+) workers @", text)
