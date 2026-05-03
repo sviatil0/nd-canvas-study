@@ -84,8 +84,8 @@ class Progress:
             "size": size, "status": status, "note": note,
             "at": time.time(),
         })
-        if status != "ok":
-            self.data["errors"].append({"kind": kind, "source": source, "note": note})
+        if status not in ("ok", "cached", "skipped"):
+            self.data["errors"].append({"kind": kind, "source": source, "note": note, "status": status})
         if len(self.data["assets"]) % 10 == 0:
             self.flush()
 
