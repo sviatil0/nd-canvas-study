@@ -599,6 +599,68 @@ def formulas(request, cid: int):
     })
 
 
+def jobs_view(request, cid: int):
+    return render(request, "ui/jobs.html", {"cid": cid})
+
+
+def jobs_status(request, cid: int):
+    """Return status of background OCR job by parsing /tmp/ocr_*.log files."""
+    import re
+    cdir = _course_dir_for(cid)
+
+    jobs = []
+    log_files = [
+        ("vertex", "/tmp/ocr_vertex_full.log"),
+        ("claude", "/tmp/ocr_claude_full.log"),
+        ("gemini", "/tmp/ocr_gemini_full.log"),
+        ("tesseract", "/tmp/ocr_tesseract_full.log"),
+    ]
+    for name, path in log_files:
+        p = Path(path)
+        if not p.exists():
+            continue
+        try:
+            text = p.read_text()
+        except Exception:
+            continue
+        total_match = re.search(r"Transcribing (\d+) pages", text)
+        total = int(total_match.group(1)) if total_match else 0
+        done = len(re.findall(r"^\s*✓ \[", text, re.M))
+        failed = len(re.findall(r"^\s*✗ \[", text, re.M))
+        cost_match = re.search(r"Estimated cost: ~\$([\d.]+)", text)
+        cost = float(cost_match.group(1)) if cost_match else 0.0
+        finished = "Done." in text
+        last_lines = "\n".join(text.splitlines()[-12:])
+        # Find ETA from last line
+        eta_match = re.search(r"ETA ([\d.]+)m", text.splitlines()[-2] if len(text.splitlines()) >= 2 else "")
+        eta = float(eta_match.group(1)) if eta_match else None
+        jobs.append({
+            "name": name,
+            "log": str(path),
+            "total": total,
+            "done": done,
+            "failed": failed,
+            "pct": int(round(100 * done / total)) if total else 0,
+            "cost_est": cost,
+            "eta_min": eta,
+            "finished": finished,
+            "tail": last_lines,
+            "mtime": p.stat().st_mtime,
+        })
+
+    # OCR cache state
+    ocr_dir = cdir / "_ocr"
+    cached = sorted(ocr_dir.glob("*.txt")) if ocr_dir.exists() else []
+    ocr_files = []
+    for f in cached:
+        text = f.read_text(errors="ignore")
+        bad = "[vertex error" in text or "[claude error" in text or "[gemini error" in text
+        ocr_files.append({"name": f.name, "size": f.stat().st_size, "bad": bad})
+
+    return HttpResponse(json.dumps({"jobs": jobs, "ocr_files": ocr_files}, indent=2),
+                        content_type="application/json")
+
+
 def graph_png(request, cid: int):
     cdir = _course_dir_for(cid)
     png = cdir / "bundles" / "topic_graph.png"

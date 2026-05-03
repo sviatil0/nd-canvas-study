@@ -57,8 +57,15 @@ def extract_pdf(path: Path, course_dir: Path | None = None) -> str:
         return f"[pdf extract failed: {e}]"
 
 
+EXCLUDED_DIRS = {"_ocr", "_snippets", "_attempts", "_shards", "_pages", "chroma", "bundles", "transcripts"}
+
+
 def walk_pdfs(course_dir: Path):
     for p in course_dir.rglob("*.pdf"):
+        if not p.is_file():
+            continue
+        if any(part in EXCLUDED_DIRS for part in p.parts):
+            continue
         yield p
 
 

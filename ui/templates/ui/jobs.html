@@ -1,0 +1,140 @@
+{% extends "ui/base.html" %}
+{% block title %}Jobs · {{ cid }}{% endblock %}
+{% block content %}
+<a class="btn btn-sm btn-outline-secondary mb-3" href="{% url 'ui:course_detail' cid %}">&larr; back</a>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2>Background jobs</h2>
+  <span class="text-muted small" id="last-refresh">refreshing every 3s…</span>
+</div>
+
+<div id="jobs-container"></div>
+
+<div class="card mt-4">
+  <div class="card-body">
+    <h5 class="card-title">OCR cache files</h5>
+    <div id="ocr-files" class="small font-monospace"></div>
+  </div>
+</div>
+
+<script>
+async function refresh() {
+  try {
+    const r = await fetch("{% url 'ui:jobs_status' cid %}");
+    const data = await r.json();
+    renderJobs(data.jobs);
+    renderOcr(data.ocr_files);
+    document.getElementById('last-refresh').textContent = 'updated ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    document.getElementById('last-refresh').textContent = 'refresh failed: ' + e;
+  }
+}
+
+function renderJobs(jobs) {
+  const c = document.getElementById('jobs-container');
+  c.replaceChildren();
+  if (!jobs.length) {
+    const empty = document.createElement('div');
+    empty.className = 'alert alert-secondary';
+    empty.textContent = 'No background jobs running. Start one from the CLI: ./start.sh prep statistics';
+    c.appendChild(empty);
+    return;
+  }
+  jobs.forEach(j => {
+    const card = document.createElement('div');
+    card.className = 'card mb-3 ' + (j.finished ? 'border-success' : '');
+
+    const head = document.createElement('div');
+    head.className = 'card-header d-flex justify-content-between';
+    const left = document.createElement('span');
+    const nameSpan = document.createElement('strong');
+    nameSpan.textContent = j.name + ' OCR';
+    left.appendChild(nameSpan);
+    const statusBadge = document.createElement('span');
+    statusBadge.className = 'badge ms-2 ' + (j.finished ? 'bg-success' : 'bg-primary');
+    statusBadge.textContent = j.finished ? 'done' : 'running';
+    left.appendChild(statusBadge);
+    head.appendChild(left);
+    const right = document.createElement('span');
+    right.className = 'small text-muted';
+    right.textContent = j.log;
+    head.appendChild(right);
+    card.appendChild(head);
+
+    const body = document.createElement('div');
+    body.className = 'card-body';
+
+    const stats = document.createElement('div');
+    stats.className = 'd-flex justify-content-between mb-2';
+    const left2 = document.createElement('span');
+    left2.textContent = j.done + ' / ' + j.total + ' done · ' + j.failed + ' failed';
+    stats.appendChild(left2);
+    const right2 = document.createElement('span');
+    right2.className = 'text-muted';
+    let etaTxt = j.eta_min !== null && j.eta_min !== undefined ? 'ETA ' + j.eta_min.toFixed(1) + 'm' : '';
+    if (j.cost_est) etaTxt += '  ·  est cost $' + j.cost_est.toFixed(2);
+    right2.textContent = etaTxt;
+    stats.appendChild(right2);
+    body.appendChild(stats);
+
+    const bar = document.createElement('div');
+    bar.className = 'progress mb-3';
+    bar.style.height = '12px';
+    const inner = document.createElement('div');
+    inner.className = 'progress-bar bg-success';
+    inner.style.width = j.pct + '%';
+    bar.appendChild(inner);
+    body.appendChild(bar);
+
+    const tailBox = document.createElement('pre');
+    tailBox.style.background = '#1e1e1e';
+    tailBox.style.color = '#dcdcdc';
+    tailBox.style.padding = '8px';
+    tailBox.style.borderRadius = '4px';
+    tailBox.style.maxHeight = '240px';
+    tailBox.style.overflow = 'auto';
+    tailBox.style.fontSize = '12px';
+    tailBox.style.margin = '0';
+    tailBox.textContent = j.tail || '(empty)';
+    body.appendChild(tailBox);
+
+    card.appendChild(body);
+    c.appendChild(card);
+  });
+}
+
+function renderOcr(files) {
+  const c = document.getElementById('ocr-files');
+  c.replaceChildren();
+  if (!files.length) {
+    c.textContent = 'No OCR cache files yet.';
+    return;
+  }
+  const totalGood = files.filter(f => !f.bad).length;
+  const totalBad = files.filter(f => f.bad).length;
+  const summary = document.createElement('div');
+  summary.className = 'mb-2';
+  const ok = document.createElement('span');
+  ok.className = 'badge bg-success me-2';
+  ok.textContent = totalGood + ' good';
+  summary.appendChild(ok);
+  if (totalBad) {
+    const bad = document.createElement('span');
+    bad.className = 'badge bg-danger me-2';
+    bad.textContent = totalBad + ' with errors';
+    summary.appendChild(bad);
+  }
+  c.appendChild(summary);
+
+  files.forEach(f => {
+    const row = document.createElement('div');
+    row.className = f.bad ? 'text-danger' : '';
+    row.textContent = (f.bad ? '✗ ' : '✓ ') + f.name + '  (' + f.size + ' B)';
+    c.appendChild(row);
+  });
+}
+
+refresh();
+setInterval(refresh, 3000);
+</script>
+{% endblock %}
