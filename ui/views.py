@@ -204,9 +204,11 @@ def course_detail(request, cid: int):
     if bundles_dir.exists():
         for f in sorted(bundles_dir.glob("*.md")):
             bundles.append({"cat": f.stem, "size": f.stat().st_size})
+    _internal = {"_ocr", "_pages", "_shards", "_snippets", "_attempts", "chroma"}
     files = [
         {"rel": str(p.relative_to(cdir)), "size": p.stat().st_size}
         for p in sorted(cdir.rglob("*.pdf"))
+        if p.is_file() and not any(part in _internal for part in p.parts)
     ]
     gap_json = bundles_dir / "topic_gap.json"
     gap = json.loads(gap_json.read_text()) if gap_json.exists() else []
@@ -349,6 +351,12 @@ def serve_file(request, cid: int, rel: str):
         raise Http404
     if not target.exists():
         raise Http404
+    # Reject internal cache directories that happen to end in .pdf
+    forbidden = {"_ocr", "_pages", "_shards", "_snippets", "_attempts", "chroma"}
+    if any(part in forbidden for part in target.parts):
+        raise Http404("internal cache, not a real file")
+    if target.is_dir():
+        raise Http404("not a file")
     return FileResponse(open(target, "rb"))
 
 
