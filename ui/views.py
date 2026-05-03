@@ -163,7 +163,9 @@ def course_detail(request, cid: int):
     ]
     gap_json = bundles_dir / "topic_gap.json"
     gap = json.loads(gap_json.read_text()) if gap_json.exists() else []
-    gap_top = [r for r in gap if r["share_gap_pp"] > 0 and r["exam_hits"] >= 3][:15]
+    # Show all topics that appear in exam corpus, sorted by gap (most under-prepared first).
+    gap_top = [r for r in gap if r["exam_hits"] >= 1]
+    gap_top.sort(key=lambda r: -r["share_gap_pp"])
 
     progress = _load_progress(cdir)
     problems_file = bundles_dir / "problems.json"
