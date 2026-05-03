@@ -67,8 +67,17 @@ CHAPTER_TO_TOPIC: dict[int, list[str]] = {
 
 
 def chapter_from_path(rel_path: str) -> int | None:
-    m = re.search(r"chapter[s]?-(\d+)", rel_path.lower())
+    m = re.search(r"chapter[s]?-(\d+)(?!\d)", rel_path.lower())
     return int(m.group(1)) if m else None
+
+
+def chapters_from_filename(rel_path: str) -> list[int]:
+    """Files named 'chapters-10-12-13-14' cover multiple chapters."""
+    name = rel_path.lower()
+    m = re.search(r"chapters?-(\d+(?:-\d+){1,})", name)
+    if not m:
+        return []
+    return [int(x) for x in m.group(1).split("-") if x.isdigit() and 1 <= int(x) <= 20]
 
 
 def classify_with_chapter_bias(body: str, rel_path: str) -> str | None:
@@ -76,6 +85,17 @@ def classify_with_chapter_bias(body: str, rel_path: str) -> str | None:
     hits = topic_hits(body)
     if not hits:
         return None
+    # Multi-chapter filename (e.g. 'chapters-10-12-13-14') restricts allowed
+    # topics to UNION of those chapters.
+    multi = chapters_from_filename(rel_path)
+    if multi:
+        allowed = set()
+        for c in multi:
+            allowed.update(CHAPTER_TO_TOPIC.get(c, []))
+        constrained = {t: c for t, c in hits.items() if t in allowed}
+        if constrained:
+            return max(constrained, key=constrained.get)
+        return max(hits, key=hits.get)
     ch = chapter_from_path(rel_path)
     if ch is None:
         return max(hits, key=hits.get)
