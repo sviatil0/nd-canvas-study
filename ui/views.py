@@ -321,7 +321,7 @@ def ask_region(request, cid: int):
         "If the region contains a problem, solve it step-by-step."
     )
     try:
-        text = generate_with_images(prompt, [str(dest)], max_output_tokens=4096)
+        text = generate_with_images(prompt, [str(dest)], max_output_tokens=16384)
     except Exception as e:
         return HttpResponse(json.dumps({"error": str(e)}),
                             status=500, content_type="application/json")
@@ -529,7 +529,7 @@ def followup(request, cid: int, topic: str):
     if backend == "gemini":
         from gemini_client import generate
         try:
-            text = generate(prompt, max_output_tokens=4096)
+            text = generate(prompt, max_output_tokens=16384)
         except Exception as e:
             return HttpResponse(json.dumps({"error": str(e)}), status=500, content_type="application/json")
         return HttpResponse(json.dumps({"answer": text}), content_type="application/json")
@@ -688,9 +688,9 @@ def grade_answer(request, cid: int):
         from gemini_client import generate, generate_with_images
         try:
             if image_paths:
-                text = generate_with_images(prompt, image_paths, max_output_tokens=8192)
+                text = generate_with_images(prompt, image_paths, max_output_tokens=16384)
             else:
-                text = generate(prompt, max_output_tokens=8192)
+                text = generate(prompt, max_output_tokens=16384)
         except Exception as e:
             return HttpResponse(json.dumps({"error": str(e)}), status=500, content_type="application/json")
         return HttpResponse(json.dumps({"feedback": text, "images": len(image_paths)}),

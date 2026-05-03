@@ -57,7 +57,7 @@ def _solve_via_gemini(prompt: str) -> dict:
     sys.path.insert(0, str(Path(__file__).parent))
     from gemini_client import generate
     try:
-        text = generate(prompt, system=SYSTEM_PROMPT, max_output_tokens=8192)
+        text = generate(prompt, system=SYSTEM_PROMPT, max_output_tokens=16384)
     except Exception as e:
         return {"error": str(e)}
     return {
