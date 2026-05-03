@@ -8,6 +8,7 @@ from pathlib import Path
 from django.conf import settings
 from django.contrib import messages
 from django.http import FileResponse, Http404, HttpResponse
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
@@ -429,8 +430,24 @@ def grade_answer(request, cid: int):
     problem = request.POST.get("problem", "").strip()
     attempt = request.POST.get("attempt", "").strip()
     topic = request.POST.get("topic", "").strip() or None
-    if not problem or not attempt:
-        return HttpResponse(json.dumps({"error": "need problem + attempt"}), status=400, content_type="application/json")
+
+    # Save uploaded image attempts under bundles/_attempts/ and reference paths in the prompt.
+    image_paths: list[str] = []
+    attempts_dir = cdir / "bundles" / "_attempts"
+    attempts_dir.mkdir(parents=True, exist_ok=True)
+    import time, uuid
+    for f in request.FILES.getlist("image"):
+        ext = (f.name.rsplit(".", 1)[-1] or "png").lower()[:5]
+        safe_ext = "".join(c for c in ext if c.isalnum())
+        dest = attempts_dir / f"{int(time.time())}_{uuid.uuid4().hex[:8]}.{safe_ext or 'png'}"
+        with open(dest, "wb") as out:
+            for chunk in f.chunks():
+                out.write(chunk)
+        image_paths.append(str(dest))
+
+    if not problem or (not attempt and not image_paths):
+        return HttpResponse(json.dumps({"error": "need problem + attempt (text or image)"}),
+                            status=400, content_type="application/json")
 
     sys.path.insert(0, str(ROOT))
     from solver import _gather_context
@@ -447,23 +464,37 @@ def grade_answer(request, cid: int):
         "5. If correct: confirm and note any inefficiencies.\n"
         "Use Markdown + LaTeX ($...$ inline, $$...$$ block). Keep under 350 words."
     )
+    image_block = ""
+    if image_paths:
+        image_block = (
+            "\n--- STUDENT ATTEMPT IMAGE(S) ---\n"
+            "Read the image file(s) at the absolute path(s) below to see the student's "
+            "handwritten/screenshotted work, then grade as instructed:\n"
+            + "\n".join(f"  {p}" for p in image_paths)
+            + "\n"
+        )
     prompt = (
         f"--- COURSE REFERENCE ---\n{context}\n\n"
         f"--- PROBLEM ---\n{problem}\n\n"
-        f"--- STUDENT ATTEMPT ---\n{attempt}\n\n"
-        f"--- TASK ---\n{instruction}"
+        f"--- STUDENT ATTEMPT (typed) ---\n{attempt or '(none — see image)'}\n"
+        f"{image_block}"
+        f"\n--- TASK ---\n{instruction}"
     )
 
     import shutil, subprocess
     if not shutil.which("claude"):
         return HttpResponse(json.dumps({"error": "claude CLI missing"}), status=500, content_type="application/json")
+    cli_args = ["claude", "-p", prompt]
+    if image_paths:
+        cli_args = ["claude", "-p", "--allowed-tools", "Read", prompt]
     try:
-        proc = subprocess.run(["claude", "-p", prompt], capture_output=True, text=True, timeout=180)
+        proc = subprocess.run(cli_args, capture_output=True, text=True, timeout=240)
     except subprocess.TimeoutExpired:
         return HttpResponse(json.dumps({"error": "timeout"}), status=504, content_type="application/json")
     if proc.returncode != 0:
         return HttpResponse(json.dumps({"error": proc.stderr[:300]}), status=500, content_type="application/json")
-    return HttpResponse(json.dumps({"feedback": proc.stdout.strip()}), content_type="application/json")
+    return HttpResponse(json.dumps({"feedback": proc.stdout.strip(), "images": len(image_paths)}),
+                        content_type="application/json")
 
 
 def likelihood(request, cid: int):
@@ -484,6 +515,7 @@ def build_likelihood(request, cid: int):
     return redirect("ui:likelihood", cid=cid)
 
 
+@xframe_options_sameorigin
 def formulas(request, cid: int):
     cdir = _course_dir_for(cid)
     pdf = cdir / "modules/final-exam-materials/30440feformulas.pdf"

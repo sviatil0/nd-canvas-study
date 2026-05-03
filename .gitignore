@@ -8,5 +8,6 @@ downloads/
 db.sqlite3
 .DS_Store
 .ui.pid
+*/_attempts/
 */chroma/
 */_snippets/

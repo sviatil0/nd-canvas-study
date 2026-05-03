@@ -69,8 +69,16 @@
       <img src="{% url 'ui:snippet' cid p.source p.page %}" class="img-fluid border mt-2" loading="lazy">
     </details>
     <hr>
-    <label class="form-label small text-muted">Your answer:</label>
-    <textarea class="form-control mb-2 attempt" rows="4" placeholder="$F = MSTr/MSE = ...$"></textarea>
+    <label class="form-label small text-muted">Your answer (type, paste image with Ctrl/Cmd-V, or drag-drop):</label>
+    <textarea class="form-control mb-2 attempt" rows="4" placeholder="$F = MSTr/MSE = ...$ — or paste a screenshot of your handwritten work"></textarea>
+    <div class="d-flex gap-2 align-items-center mb-2 flex-wrap">
+      <label class="btn btn-sm btn-outline-secondary mb-0">
+        📎 Add image(s)
+        <input type="file" class="d-none img-input" accept="image/*" multiple>
+      </label>
+      <small class="text-muted img-count">no images</small>
+    </div>
+    <div class="img-thumbs d-flex gap-2 flex-wrap mb-2"></div>
     <div class="d-flex gap-2">
       <button class="btn btn-success grade-btn"
               data-target="g{{ forloop.counter }}"
@@ -156,25 +164,102 @@ function setRendered(t, label, text, color) {
   if (window.renderMathInElement) renderMathIn(w);
 }
 
+// Per-card image attachments
+const cardImages = new WeakMap();
+
+function getImgs(card) {
+  if (!cardImages.has(card)) cardImages.set(card, []);
+  return cardImages.get(card);
+}
+
+function refreshThumbs(card) {
+  const imgs = getImgs(card);
+  const wrap = card.querySelector('.img-thumbs');
+  wrap.replaceChildren();
+  card.querySelector('.img-count').textContent = imgs.length ? imgs.length + ' image(s) ready' : 'no images';
+  imgs.forEach((file, idx) => {
+    const url = URL.createObjectURL(file);
+    const box = document.createElement('div');
+    box.style.position = 'relative';
+    const img = document.createElement('img');
+    img.src = url;
+    img.style.maxHeight = '90px';
+    img.style.border = '1px solid #ccc';
+    img.style.borderRadius = '4px';
+    box.appendChild(img);
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.textContent = '×';
+    x.className = 'btn btn-sm btn-danger';
+    x.style.position = 'absolute';
+    x.style.top = '-8px';
+    x.style.right = '-8px';
+    x.style.padding = '0 6px';
+    x.onclick = () => { imgs.splice(idx, 1); refreshThumbs(card); };
+    box.appendChild(x);
+    wrap.appendChild(box);
+  });
+}
+
+document.querySelectorAll('.mock-q').forEach(card => {
+  const ta = card.querySelector('.attempt');
+  const fileInput = card.querySelector('.img-input');
+
+  fileInput.addEventListener('change', () => {
+    const imgs = getImgs(card);
+    Array.from(fileInput.files).forEach(f => imgs.push(f));
+    fileInput.value = '';
+    refreshThumbs(card);
+  });
+
+  ta.addEventListener('paste', (e) => {
+    const items = e.clipboardData?.items || [];
+    let added = false;
+    for (const it of items) {
+      if (it.kind === 'file' && it.type.startsWith('image/')) {
+        const f = it.getAsFile();
+        if (f) { getImgs(card).push(f); added = true; }
+      }
+    }
+    if (added) { e.preventDefault(); refreshThumbs(card); }
+  });
+
+  card.addEventListener('dragover', (e) => { e.preventDefault(); });
+  card.addEventListener('drop', (e) => {
+    if (!e.dataTransfer?.files?.length) return;
+    e.preventDefault();
+    Array.from(e.dataTransfer.files)
+      .filter(f => f.type.startsWith('image/'))
+      .forEach(f => getImgs(card).push(f));
+    refreshThumbs(card);
+  });
+});
+
 document.querySelectorAll('.grade-btn').forEach(btn => {
   btn.addEventListener('click', async () => {
     const target = document.getElementById(btn.dataset.target);
     const card = btn.closest('.mock-q');
     const attempt = card.querySelector('.attempt').value.trim();
-    if (!attempt) { setStatus(target, 'warning', 'Write your attempt first.'); return; }
-    setStatus(target, 'info', 'Grading…');
+    const imgs = getImgs(card);
+    if (!attempt && imgs.length === 0) {
+      setStatus(target, 'warning', 'Write your attempt or attach an image first.');
+      return;
+    }
+    setStatus(target, 'info', imgs.length ? `Grading… (analyzing ${imgs.length} image(s))` : 'Grading…');
     btn.disabled = true;
     const fd = new FormData();
     fd.append('problem', btn.dataset.problem);
     fd.append('topic', btn.dataset.topic);
     fd.append('attempt', attempt);
+    imgs.forEach(f => fd.append('image', f, f.name || 'paste.png'));
     try {
       const r = await fetch("{% url 'ui:grade_answer' cid %}", {
         method: 'POST', headers: {'X-CSRFToken': csrf}, body: fd,
       });
       const data = await r.json();
       if (data.error) setStatus(target, 'danger', data.error);
-      else setRendered(target, 'Grader feedback', data.feedback, 'light border border-success');
+      else setRendered(target, 'Grader feedback' + (data.images ? ` (${data.images} image(s))` : ''),
+                       data.feedback, 'light border border-success');
     } catch (e) { setStatus(target, 'danger', String(e)); }
     finally { btn.disabled = false; }
   });
