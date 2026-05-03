@@ -49,6 +49,8 @@
     <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
       <h6 class="card-title mb-0">Possible duplicate events on your calendar</h6>
       <div class="d-flex gap-2">
+        <span id="cal-dedup-count" class="badge bg-secondary align-self-center"></span>
+        <button class="btn btn-sm btn-outline-secondary" id="cal-dedup-restore-suggested" title="Re-check the suggested duplicates">Use suggestions</button>
         <button class="btn btn-sm btn-outline-secondary" id="cal-dedup-select-foreign">Select all foreign</button>
         <button class="btn btn-sm btn-outline-secondary" id="cal-dedup-clear">Clear</button>
         <button class="btn btn-sm btn-danger" id="cal-dedup-delete">Delete checked</button>
@@ -206,6 +208,10 @@ document.getElementById('cal-dedup-btn').addEventListener('click', async () => {
     list.replaceChildren();
     if (d.error) { list.textContent = 'Error: ' + d.error; return; }
     if (!d.matches.length) { list.textContent = '✓ No same-date events found.'; return; }
+    suggestedIds = new Set();
+    d.matches.forEach(m => {
+      m.existing.forEach(ex => { if (ex.preselect) suggestedIds.add(ex.id); });
+    });
     d.matches.forEach(m => {
       const head = document.createElement('div');
       head.className = 'fw-bold mt-3 small';
@@ -219,26 +225,52 @@ document.getElementById('cal-dedup-btn').addEventListener('click', async () => {
         cb.className = 'form-check-input dedup-cb';
         cb.dataset.eventId = ex.id;
         cb.dataset.ours = ex.ours ? '1' : '0';
+        cb.checked = !!ex.preselect;
         const tag = document.createElement('span');
         tag.className = 'badge ' + (ex.ours ? 'bg-success' : 'bg-warning text-dark');
         tag.textContent = ex.ours ? 'ours' : 'foreign';
         const text = document.createElement('span');
         text.textContent = ex.summary;
         row.append(cb, tag, text);
+        if (ex.reason) {
+          const why = document.createElement('span');
+          why.className = 'badge bg-info text-dark ms-1';
+          why.textContent = '↻ ' + ex.reason;
+          row.appendChild(why);
+        }
         list.appendChild(row);
       });
     });
+    document.querySelectorAll('.dedup-cb').forEach(cb =>
+      cb.addEventListener('change', updateDedupCount));
+    updateDedupCount();
   } catch (e) { list.textContent = 'Failed: ' + e; }
 });
 
+// Track suggested checkboxes so "Use suggestions" can restore
+let suggestedIds = new Set();
+
+document.getElementById('cal-dedup-restore-suggested').addEventListener('click', () => {
+  document.querySelectorAll('.dedup-cb').forEach(cb => {
+    cb.checked = suggestedIds.has(cb.dataset.eventId);
+  });
+  updateDedupCount();
+});
 document.getElementById('cal-dedup-select-foreign').addEventListener('click', () => {
   document.querySelectorAll('.dedup-cb').forEach(cb => {
     cb.checked = (cb.dataset.ours === '0');
   });
+  updateDedupCount();
 });
 document.getElementById('cal-dedup-clear').addEventListener('click', () => {
   document.querySelectorAll('.dedup-cb').forEach(cb => cb.checked = false);
+  updateDedupCount();
 });
+
+function updateDedupCount() {
+  const n = document.querySelectorAll('.dedup-cb:checked').length;
+  document.getElementById('cal-dedup-count').textContent = n + ' checked';
+}
 document.getElementById('cal-dedup-delete').addEventListener('click', async () => {
   const ids = Array.from(document.querySelectorAll('.dedup-cb'))
     .filter(cb => cb.checked).map(cb => cb.dataset.eventId);

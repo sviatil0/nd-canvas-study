@@ -884,23 +884,59 @@ def calendar_dedup(request, cid: int):
                             content_type="application/json")
 
     # For each new event, find existing events same date with similar title
+    def _toks(s: str) -> set:
+        s = (s or "").lower()
+        # strip emoji + brackets + punctuation
+        import re as _re
+        s = _re.sub(r"[^\w\s]", " ", s)
+        return {t for t in s.split() if len(t) > 2 and t not in
+                {"the", "and", "for", "from", "ndcanvas", "statistics"}}
+
     matches = []
     label = cdir.name.split("_", 1)[1] if "_" in cdir.name else cdir.name
     for e in uniq:
         emoji, kind, _color = categorize_event(e)
+        new_tokens = _toks(e["title"]) | _toks(kind)
         same_date = []
+        # Group existing by ndcanvas_tag → if multiple ours have same logical
+        # event (date+title-prefix) keep newest, mark older as suggested-delete
         for ex in existing:
             ex_start = ex.get("start", {})
             ex_date = ex_start.get("date") or (ex_start.get("dateTime") or "")[:10]
             if ex_date != e["date"]:
                 continue
             ex_summary = ex.get("summary") or ""
-            already_ours = (ex.get("extendedProperties") or {}).get("private", {}).get("ndcanvas_tag")
+            ex_priv = (ex.get("extendedProperties") or {}).get("private", {})
+            already_ours = bool(ex_priv.get("ndcanvas_tag"))
+            ex_tokens = _toks(ex_summary)
+            overlap = len(new_tokens & ex_tokens) / max(len(new_tokens), 1)
             same_date.append({
-                "id": ex.get("id"), "summary": ex_summary,
-                "ours": bool(already_ours),
+                "id": ex.get("id"),
+                "summary": ex_summary,
+                "ours": already_ours,
+                "tag": ex_priv.get("ndcanvas_tag", ""),
+                "overlap": round(overlap, 2),
+                "preselect": False,  # set below
             })
+
+        # Pre-select logic:
+        # - If multiple "ours" with same tag, keep newest (last in list), mark others
+        # - If foreign event has high overlap (>=0.6) with the new one, suggest delete
         if same_date:
+            ours_by_tag = {}
+            for x in same_date:
+                if x["ours"] and x["tag"]:
+                    ours_by_tag.setdefault(x["tag"], []).append(x)
+            for tag, group in ours_by_tag.items():
+                if len(group) > 1:
+                    # mark all but last for deletion
+                    for x in group[:-1]:
+                        x["preselect"] = True
+                        x["reason"] = "duplicate of newer same-tag event"
+            for x in same_date:
+                if not x["ours"] and x["overlap"] >= 0.6:
+                    x["preselect"] = True
+                    x["reason"] = f"high title overlap ({int(x['overlap']*100)}%) with new event"
             matches.append({
                 "date": e["date"], "title": e["title"], "emoji": emoji, "kind": kind,
                 "existing": same_date,
