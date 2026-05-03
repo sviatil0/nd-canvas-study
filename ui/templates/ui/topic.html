@@ -171,7 +171,11 @@ const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.
     }
   }
 
-  document.getElementById('sel-expand').addEventListener('click', () => callFollowup('expand'));
+  document.getElementById('sel-expand').addEventListener('click', () => {
+    const what = window.prompt('What detail to add about the selection? (e.g. "more examples", "edge cases", "intuition", "proof")', 'more detail');
+    if (what === null) return;
+    callFollowup('expand', what.trim() || 'more detail');
+  });
   document.getElementById('sel-ask').addEventListener('click', () => {
     const q = window.prompt('Your question about the selection:');
     if (q && q.trim()) callFollowup('ask', q.trim());

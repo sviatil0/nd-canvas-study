@@ -502,17 +502,18 @@ def followup(request, cid: int, topic: str):
     context = _gather_context(cdir, topic, max_chars=20000)
 
     if mode == "expand":
+        focus = user_q or "more detail"
         instruction = (
-            "The student selected the snippet below from the topic summary and wants MORE DETAIL. "
-            "Provide additional context, edge cases, intuition, and one extra worked micro-example. "
-            "Do NOT rewrite or contradict the selection — only add. Keep under 250 words. "
+            f"The student selected the snippet below and specifically wants: **{focus}**. "
+            "Add ONLY content related to that request. Do NOT rewrite or contradict the "
+            "selection — only add. Keep tightly scoped to what the student asked for. "
             "Use Markdown + LaTeX math ($...$ inline, $$...$$ block)."
         )
     else:
         instruction = (
             "The student selected the snippet below and asks a clarifying follow-up question. "
             "Answer the question concisely and directly with respect to the selection. "
-            "Cite specific formulas. Keep under 250 words. Use Markdown + LaTeX."
+            "Cite specific formulas. Use Markdown + LaTeX."
         )
 
     prompt = (
@@ -522,7 +523,7 @@ def followup(request, cid: int, topic: str):
         f"--- SELECTED SNIPPET ---\n{selection}\n\n"
         f"--- TASK ---\n{instruction}"
     )
-    if user_q:
+    if user_q and mode != "expand":
         prompt += f"\n\n--- STUDENT QUESTION ---\n{user_q}"
 
     backend = os.environ.get("USE_BACKEND", "gemini")
