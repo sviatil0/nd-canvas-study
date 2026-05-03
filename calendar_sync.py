@@ -122,6 +122,42 @@ def extract_events_from_assignments(course_dir: Path) -> list[dict]:
     return out
 
 
+def to_ics(events: list[dict], course_label: str, out_path: Path) -> Path:
+    """Generate .ics file usable in Google/Apple/Outlook/anywhere."""
+    from datetime import datetime as _dt
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        f"PRODID:-//nd-canvas-study//{course_label}//EN",
+        "CALSCALE:GREGORIAN",
+        f"X-WR-CALNAME:[{course_label}] ND Canvas",
+    ]
+    now = _dt.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    for i, e in enumerate(events):
+        date_compact = e["date"].replace("-", "")
+        uid = f"ndcanvas-{course_label}-{date_compact}-{i}@local"
+        title = e["title"].replace("\n", " ").replace(",", "\\,")
+        lines.append("BEGIN:VEVENT")
+        lines.append(f"UID:{uid}")
+        lines.append(f"DTSTAMP:{now}")
+        if e.get("datetime_iso"):
+            dt = _dt.fromisoformat(e["datetime_iso"])
+            start = dt.strftime("%Y%m%dT%H%M%S")
+            end = (dt.replace(hour=(dt.hour + 1) % 24)).strftime("%Y%m%dT%H%M%S")
+            lines.append(f"DTSTART;TZID=America/New_York:{start}")
+            lines.append(f"DTEND;TZID=America/New_York:{end}")
+        else:
+            lines.append(f"DTSTART;VALUE=DATE:{date_compact}")
+            lines.append(f"DTEND;VALUE=DATE:{date_compact}")
+        lines.append(f"SUMMARY:[{course_label}] {title}")
+        lines.append(f"DESCRIPTION:Auto-generated from Canvas. Source: {e.get('src', '')}")
+        lines.append("END:VEVENT")
+    lines.append("END:VCALENDAR")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text("\n".join(lines) + "\n")
+    return out_path
+
+
 def get_calendar_service():
     from google.auth import default
     from googleapiclient.discovery import build
@@ -169,6 +205,8 @@ def main() -> int:
     ap.add_argument("--course-dir", required=True)
     ap.add_argument("--calendar", default="primary")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--ics", action="store_true",
+                    help="Skip API call, just write .ics file")
     args = ap.parse_args()
 
     cdir = Path(args.course_dir)
@@ -199,6 +237,14 @@ def main() -> int:
         return 0
 
     if not uniq:
+        return 0
+
+    if args.ics:
+        ics_path = cdir / "bundles" / f"{label}.ics"
+        to_ics(uniq, label, ics_path)
+        print(f"\nWrote {len(uniq)} events to {ics_path}")
+        print(f"Import via: open '{ics_path}'  (Mac default Calendar app)")
+        print(f"  or upload to https://calendar.google.com/calendar/r/settings/export")
         return 0
 
     service = get_calendar_service()

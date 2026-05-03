@@ -720,6 +720,29 @@ def build_class_info(request, cid: int):
 
 
 @require_POST
+def calendar_ics_build(request, cid: int):
+    cdir = _course_dir_for(cid)
+    code, out = _run([PYTHON, "calendar_sync.py", "--course-dir", str(cdir), "--ics"])
+    if code == 0:
+        n = out.count("Wrote")
+        messages.success(request, "ICS file generated. Click 'Download .ics' to import to Google/Apple/Outlook calendar.")
+    else:
+        messages.error(request, f"ICS build failed: {out[-800:]}")
+    return redirect("ui:class_info", cid=cid)
+
+
+def calendar_ics(request, cid: int):
+    cdir = _course_dir_for(cid)
+    label = cdir.name.split("_", 1)[1] if "_" in cdir.name else cdir.name
+    f = cdir / "bundles" / f"{label}.ics"
+    if not f.exists():
+        raise Http404("Generate the ICS first.")
+    resp = FileResponse(open(f, "rb"), content_type="text/calendar")
+    resp["Content-Disposition"] = f'attachment; filename="{label}.ics"'
+    return resp
+
+
+@require_POST
 def calendar_grant(request, cid: int):
     """Spawn gcloud ADC login with Calendar scope. Browser opens for SSO."""
     subprocess.Popen(

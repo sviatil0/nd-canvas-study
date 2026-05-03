@@ -9,13 +9,12 @@
     <form method="post" action="{% url 'ui:build_class_info' cid %}">{% csrf_token %}
       <button class="btn btn-sm btn-outline-primary">{% if have_info %}Regenerate{% else %}Generate{% endif %}</button>
     </form>
-    <button class="btn btn-sm btn-outline-info" id="cal-preview-btn">Preview calendar events</button>
-    <form method="post" action="{% url 'ui:calendar_grant' cid %}" class="d-inline">{% csrf_token %}
-      <button class="btn btn-sm btn-outline-warning" title="One-time: opens browser to grant Calendar scope">Grant Calendar access</button>
+    <button class="btn btn-sm btn-outline-info" id="cal-preview-btn">Preview events</button>
+    <form method="post" action="{% url 'ui:calendar_ics_build' cid %}" class="d-inline">{% csrf_token %}
+      <button class="btn btn-sm btn-success" title="Build .ics file (works with any calendar)">Build .ics</button>
     </form>
-    <form method="post" action="{% url 'ui:calendar_sync_run' cid %}" id="cal-sync-form">{% csrf_token %}
-      <button class="btn btn-sm btn-success">Sync to Google Calendar</button>
-    </form>
+    <a class="btn btn-sm btn-outline-success" href="{% url 'ui:calendar_ics' cid %}"
+       title="Download then double-click to import to Google/Apple/Outlook">Download .ics</a>
   </div>
 </div>
 
@@ -26,6 +25,24 @@
     <small class="text-muted d-block mt-2">First-time only: in your terminal run
       <code>gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/calendar.events</code>
     </small>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+      <h6 class="card-title mb-0">📅 Embedded Google Calendar</h6>
+      <div class="d-flex gap-2 align-items-center">
+        <input id="cal-email" class="form-control form-control-sm"
+               style="width:280px;" placeholder="your.email@gmail.com (or @nd.edu)">
+        <button class="btn btn-sm btn-outline-primary" id="cal-load">Load</button>
+        <button class="btn btn-sm btn-outline-secondary" id="cal-clear">Hide</button>
+      </div>
+    </div>
+    <small class="text-muted d-block mb-2">Stored locally in your browser only.</small>
+    <div id="cal-iframe-wrap" style="display:none;">
+      <iframe id="cal-iframe" style="border:0; width:100%; height:600px;" frameborder="0" scrolling="no"></iframe>
+    </div>
   </div>
 </div>
 
@@ -56,6 +73,29 @@ exam logistics, grading, policies, dates, and warnings.</div>
     if (window.renderMathInElement) renderMathIn(target);
   });
 })();
+
+// Embedded Google Calendar (saved in localStorage per course)
+const CAL_KEY = 'ndcanvas_cal_email_{{ cid }}';
+const emailInput = document.getElementById('cal-email');
+const wrap = document.getElementById('cal-iframe-wrap');
+const iframe = document.getElementById('cal-iframe');
+function loadCal(email) {
+  if (!email) return;
+  const src = "https://calendar.google.com/calendar/embed"
+    + "?src=" + encodeURIComponent(email)
+    + "&mode=AGENDA&showTitle=0&showPrint=0&showCalendars=0&showTabs=1&showTz=0";
+  iframe.src = src;
+  wrap.style.display = '';
+  localStorage.setItem(CAL_KEY, email);
+}
+const saved = localStorage.getItem(CAL_KEY);
+if (saved) { emailInput.value = saved; loadCal(saved); }
+document.getElementById('cal-load').addEventListener('click', () => loadCal(emailInput.value.trim()));
+document.getElementById('cal-clear').addEventListener('click', () => {
+  wrap.style.display = 'none';
+  iframe.src = '';
+  localStorage.removeItem(CAL_KEY);
+});
 
 document.getElementById('cal-preview-btn').addEventListener('click', async () => {
   const card = document.getElementById('cal-preview');
