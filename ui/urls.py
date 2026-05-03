@@ -26,4 +26,6 @@ urlpatterns = [
     path("course/<int:cid>/graph.png", views.graph_png, name="graph_png"),
     path("course/<int:cid>/graph/render/", views.render_graph_png, name="render_graph_png"),
     path("course/<int:cid>/topic/<str:topic>/followup/", views.followup, name="followup"),
+    path("course/<int:cid>/progress/", views.progress_get, name="progress_get"),
+    path("course/<int:cid>/progress/toggle/", views.progress_toggle, name="progress_toggle"),
 ]

@@ -170,16 +170,28 @@ const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.
 
 <hr class="my-4">
 <h3>Problems from exam/practice material</h3>
-<p class="text-muted">{{ problems|length }} problems</p>
+<div class="mb-3">
+  <div class="d-flex justify-content-between small text-muted mb-1">
+    <span>Progress: <span id="topic-done-count">{{ done_count }}</span> / {{ total_count }} solved</span>
+    <span><span id="topic-pct">{{ pct }}</span>%</span>
+  </div>
+  <div class="progress" style="height:10px;">
+    <div id="topic-progress-bar" class="progress-bar bg-success" role="progressbar"
+         style="width: {{ pct }}%;" aria-valuenow="{{ pct }}" aria-valuemin="0" aria-valuemax="100"></div>
+  </div>
+</div>
 
 {% if not problems %}
   <div class="alert alert-warning">No exam problems indexed for this topic. Try the <a href="{% url 'ui:ask' cid %}?q={{ topic }}">semantic search</a>.</div>
 {% endif %}
 
 {% for p in problems %}
-  <div class="card mb-4" id="p{{ forloop.counter }}">
+  <div class="card mb-4 problem-card {% if p.done %}border-success{% endif %}" id="p{{ forloop.counter }}" data-key="{{ p.key }}">
     <div class="card-header d-flex justify-content-between align-items-center">
-      <div>
+      <div class="d-flex align-items-center gap-2">
+        <input class="form-check-input mt-0 done-toggle" type="checkbox"
+               data-key="{{ p.key }}" {% if p.done %}checked{% endif %}
+               title="Mark as solved">
         <span class="badge bg-secondary">#{{ forloop.counter }}</span>
         <a href="{% url 'ui:serve_file' cid p.source %}" target="_blank">{{ p.source }}</a>
         · page {{ p.page }} · problem {{ p.problem }}
@@ -237,6 +249,48 @@ function setAnswer(target, data) {
   target.appendChild(wrap);
   if (window.renderMathInElement) renderMathIn(body);
 }
+
+const TOPIC_KEY = "{{ topic }}";
+const TOTAL_PROBLEMS = {{ total_count }};
+
+async function toggleDone(key, state) {
+  const fd = new FormData();
+  fd.append('topic', TOPIC_KEY);
+  fd.append('key', key);
+  fd.append('state', state ? '1' : '0');
+  const r = await fetch("{% url 'ui:progress_toggle' cid %}", {
+    method: 'POST', headers: {'X-CSRFToken': csrf}, body: fd,
+  });
+  return r.json();
+}
+
+function updateProgressUI(doneCount) {
+  const pct = TOTAL_PROBLEMS ? Math.round(100 * doneCount / TOTAL_PROBLEMS) : 0;
+  const bar = document.getElementById('topic-progress-bar');
+  bar.style.width = pct + '%';
+  bar.setAttribute('aria-valuenow', pct);
+  document.getElementById('topic-done-count').textContent = doneCount;
+  document.getElementById('topic-pct').textContent = pct;
+}
+
+document.querySelectorAll('.done-toggle').forEach(cb => {
+  cb.addEventListener('change', async () => {
+    cb.disabled = true;
+    const card = cb.closest('.problem-card');
+    try {
+      const data = await toggleDone(cb.dataset.key, cb.checked);
+      if (data && data.ok) {
+        if (cb.checked) card.classList.add('border-success');
+        else card.classList.remove('border-success');
+        updateProgressUI(data.count);
+      }
+    } catch (e) {
+      cb.checked = !cb.checked;
+    } finally {
+      cb.disabled = false;
+    }
+  });
+});
 
 document.querySelectorAll('.solve-btn').forEach(btn => {
   btn.addEventListener('click', async () => {

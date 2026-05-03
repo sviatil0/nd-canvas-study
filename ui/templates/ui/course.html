@@ -37,12 +37,27 @@
   </div>
 </div>
 
+{% if overall_total %}
+<div class="card mb-3 border-success">
+  <div class="card-body py-2">
+    <div class="d-flex justify-content-between mb-1">
+      <strong>Overall problem progress</strong>
+      <span>{{ overall_done }} / {{ overall_total }} ({{ overall_pct }}%)</span>
+    </div>
+    <div class="progress" style="height:14px;">
+      <div class="progress-bar bg-success" role="progressbar"
+           style="width: {{ overall_pct }}%;" aria-valuenow="{{ overall_pct }}" aria-valuemin="0" aria-valuemax="100"></div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% if have_gap %}
 <div class="card mb-4">
   <div class="card-body">
     <h5 class="card-title">Top under-prepared topics (exam vs HW/in-class)</h5>
-    <table class="table table-sm">
-      <thead><tr><th>Topic</th><th>Exam hits</th><th>Prep hits</th><th>Gap (pp)</th><th>Ratio</th></tr></thead>
+    <table class="table table-sm align-middle">
+      <thead><tr><th>Topic</th><th>Exam hits</th><th>Prep hits</th><th>Gap (pp)</th><th>Progress</th></tr></thead>
       <tbody>
       {% for r in gap_top %}
         <tr>
@@ -50,7 +65,14 @@
           <td>{{ r.exam_hits }}</td>
           <td>{{ r.prep_hits }}</td>
           <td>{{ r.share_gap_pp }}</td>
-          <td>{{ r.exam_to_prep_ratio }}</td>
+          <td style="min-width:200px;">
+            <div class="d-flex align-items-center gap-2">
+              <div class="progress flex-grow-1" style="height:8px;">
+                <div class="progress-bar bg-success" style="width: {{ r.progress_pct }}%;"></div>
+              </div>
+              <small class="text-muted">{{ r.progress_done }}/{{ r.progress_total }}</small>
+            </div>
+          </td>
         </tr>
       {% endfor %}
       </tbody>

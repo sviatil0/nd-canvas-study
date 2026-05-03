@@ -131,6 +131,25 @@ def course_detail(request, cid: int):
     gap_json = bundles_dir / "topic_gap.json"
     gap = json.loads(gap_json.read_text()) if gap_json.exists() else []
     gap_top = [r for r in gap if r["share_gap_pp"] > 0 and r["exam_hits"] >= 3][:15]
+
+    progress = _load_progress(cdir)
+    problems_file = bundles_dir / "problems.json"
+    if problems_file.exists():
+        problems_by_topic = json.loads(problems_file.read_text())
+    else:
+        problems_by_topic = {}
+    for r in gap_top:
+        t = r["topic"]
+        total = len(problems_by_topic.get(t, []))
+        done = len(progress["done"].get(t, []))
+        r["progress_done"] = done
+        r["progress_total"] = total
+        r["progress_pct"] = int(round(100 * done / max(total, 1))) if total else 0
+
+    overall_total = sum(len(v) for v in problems_by_topic.values())
+    overall_done = sum(len(v) for v in progress["done"].values())
+    overall_pct = int(round(100 * overall_done / max(overall_total, 1))) if overall_total else 0
+
     return render(request, "ui/course.html", {
         "cid": cid,
         "course": course,
@@ -139,6 +158,9 @@ def course_detail(request, cid: int):
         "gap_top": gap_top,
         "have_bundles": bool(bundles),
         "have_gap": bool(gap),
+        "overall_done": overall_done,
+        "overall_total": overall_total,
+        "overall_pct": overall_pct,
     })
 
 
@@ -215,15 +237,32 @@ def topic_detail(request, cid: int, topic: str):
                 reverse("ui:topic_detail", args=[cid, key]),
             )
 
+    progress = _load_progress(cdir)
+    done_keys = set(progress["done"].get(topic, []))
+
+    def _key(p):
+        return f"{p['source']}#p{p['page']}#{p['problem']}"
+
+    annotated = []
+    for p in problems:
+        ap = dict(p)
+        ap["key"] = _key(p)
+        ap["done"] = ap["key"] in done_keys
+        annotated.append(ap)
+    done_count = sum(1 for p in annotated if p["done"])
+
     return render(request, "ui/topic.html", {
         "cid": cid,
         "topic": topic,
-        "problems": problems,
+        "problems": annotated,
         "info": info,
         "prereqs": [(k, GRAPH[k]) for k in prereqs_of(topic) if k in GRAPH],
         "dependents": [(k, GRAPH[k]) for k in dependents_of(topic)],
         "summary_md": summary_md,
         "have_summary": bool(summary_md),
+        "done_count": done_count,
+        "total_count": len(annotated),
+        "pct": int(round(100 * done_count / max(len(annotated), 1))),
     })
 
 
@@ -298,6 +337,52 @@ def followup(request, cid: int, topic: str):
     if proc.returncode != 0:
         return HttpResponse(json.dumps({"error": proc.stderr[:300]}), status=500, content_type="application/json")
     return HttpResponse(json.dumps({"answer": proc.stdout.strip()}), content_type="application/json")
+
+
+def _progress_path(cdir: Path) -> Path:
+    return cdir / "bundles" / "progress.json"
+
+
+def _load_progress(cdir: Path) -> dict:
+    f = _progress_path(cdir)
+    if not f.exists():
+        return {"done": {}}
+    try:
+        return json.loads(f.read_text())
+    except Exception:
+        return {"done": {}}
+
+
+def _save_progress(cdir: Path, data: dict) -> None:
+    _progress_path(cdir).parent.mkdir(parents=True, exist_ok=True)
+    _progress_path(cdir).write_text(json.dumps(data, indent=2))
+
+
+def progress_get(request, cid: int):
+    cdir = _course_dir_for(cid)
+    return HttpResponse(json.dumps(_load_progress(cdir)), content_type="application/json")
+
+
+@require_POST
+def progress_toggle(request, cid: int):
+    cdir = _course_dir_for(cid)
+    topic = request.POST.get("topic", "").strip()
+    key = request.POST.get("key", "").strip()  # unique per problem
+    state = request.POST.get("state", "").strip()  # "1" or "0"
+    if not topic or not key:
+        return HttpResponse(json.dumps({"error": "missing topic or key"}),
+                            status=400, content_type="application/json")
+    data = _load_progress(cdir)
+    bucket = data["done"].setdefault(topic, [])
+    if state == "1":
+        if key not in bucket:
+            bucket.append(key)
+    else:
+        if key in bucket:
+            bucket.remove(key)
+    _save_progress(cdir, data)
+    return HttpResponse(json.dumps({"ok": True, "count": len(bucket)}),
+                        content_type="application/json")
 
 
 def graph_png(request, cid: int):
