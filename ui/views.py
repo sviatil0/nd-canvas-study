@@ -1158,8 +1158,10 @@ def jobs_status(request, cid: int):
             except Exception:
                 pass
 
-        # Live-rate ETA from last 10 completed page lines
+        # Live-rate ETA from last 20 completed lines (OCR or summary format)
         page_times = [float(m) for m in re.findall(r"\(\d+c, ([\d.]+)s\)", text)][-20:]
+        if not page_times:
+            page_times = [float(m) for m in re.findall(r"chars in ([\d.]+)s", text)][-20:]
         avg_page_s = sum(page_times) / len(page_times) if page_times else None
         remaining = max(total - done - failed, 0)
 
