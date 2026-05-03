@@ -185,17 +185,18 @@ def build_all(course_dir: Path, only: str | None = None,
     out_dir = course_dir / "bundles" / "topics"
     out_dir.mkdir(parents=True, exist_ok=True)
     targets = [only] if only else list(GRAPH.keys())
-    # Filter to those needing build
     to_build = []
     for t in targets:
         f = out_dir / f"{t}.md"
         if f.exists() and not rebuild:
-            print(f"  skip cached: {t}")
+            print(f"  skip cached: {t}", flush=True)
             continue
         to_build.append(t)
     if not to_build:
+        print("Nothing to do.", flush=True)
         return
-    print(f"\nGenerating {len(to_build)} topic summaries with {workers} parallel workers...")
+    print(f"\nGenerating {len(to_build)} topic summaries with {workers} parallel workers...",
+          flush=True)
     from concurrent.futures import ThreadPoolExecutor, as_completed
     import time as _time
     t_start = _time.time()
@@ -203,19 +204,25 @@ def build_all(course_dir: Path, only: str | None = None,
 
     def task(topic):
         t0 = _time.time()
-        text = summarize_one(course_dir, topic)
+        try:
+            text = summarize_one(course_dir, topic)
+        except Exception as e:
+            return topic, 0, _time.time() - t0, str(e)[:200]
         f = out_dir / f"{topic}.md"
         f.write_text(text)
-        return topic, len(text), _time.time() - t0
+        return topic, len(text), _time.time() - t0, None
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futures = [ex.submit(task, t) for t in to_build]
         for fut in as_completed(futures):
-            topic, n, dt = fut.result()
+            topic, n, dt, err = fut.result()
             completed += 1
             avg = (_time.time() - t_start) / completed
             eta = avg * (len(to_build) - completed)
-            print(f"  ✓ [{completed}/{len(to_build)}] {topic}: {n} chars in {dt:.1f}s (ETA {eta/60:.1f}m)")
+            tag = "✗" if err else "✓"
+            extra = f"  ERROR: {err}" if err else ""
+            print(f"  {tag} [{completed}/{len(to_build)}] {topic}: {n} chars in {dt:.1f}s "
+                  f"(ETA {eta/60:.1f}m){extra}", flush=True)
 
 
 def main() -> int:
