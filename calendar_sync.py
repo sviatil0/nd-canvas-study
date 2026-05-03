@@ -159,8 +159,19 @@ def to_ics(events: list[dict], course_label: str, out_path: Path) -> Path:
 
 
 def get_calendar_service():
-    from google.auth import default
+    """Use service-account key if present (preferred — bypasses ND OAuth block),
+    else fall back to ADC."""
+    import os
     from googleapiclient.discovery import build
+    sa_path = Path(__file__).parent / "secrets" / "canvas-cal-key.json"
+    if sa_path.exists():
+        from google.oauth2 import service_account
+        creds = service_account.Credentials.from_service_account_file(
+            str(sa_path),
+            scopes=["https://www.googleapis.com/auth/calendar"],
+        )
+        return build("calendar", "v3", credentials=creds, cache_discovery=False)
+    from google.auth import default
     creds, _ = default(scopes=["https://www.googleapis.com/auth/calendar.events"])
     return build("calendar", "v3", credentials=creds, cache_discovery=False)
 
@@ -203,7 +214,9 @@ def upsert_event(service, calendar_id: str, event: dict, course_label: str,
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--course-dir", required=True)
-    ap.add_argument("--calendar", default="primary")
+    ap.add_argument("--calendar", default="primary",
+                    help="Calendar ID. If using SA, this should be the calendar "
+                         "you shared with the SA email (e.g. soleksii@nd.edu).")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--ics", action="store_true",
                     help="Skip API call, just write .ics file")

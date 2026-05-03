@@ -784,7 +784,9 @@ def calendar_preview(request, cid: int):
 @require_POST
 def calendar_sync_run(request, cid: int):
     cdir = _course_dir_for(cid)
-    code, out = _run([PYTHON, "calendar_sync.py", "--course-dir", str(cdir)])
+    cal_id = request.POST.get("calendar_id", "").strip() or "primary"
+    code, out = _run([PYTHON, "calendar_sync.py", "--course-dir", str(cdir),
+                      "--calendar", cal_id])
     created = out.count("CREATED ")
     updated = out.count("UPDATED ")
     failed = out.count("FAIL ")

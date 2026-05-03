@@ -10,12 +10,24 @@
       <button class="btn btn-sm btn-outline-primary">{% if have_info %}Regenerate{% else %}Generate{% endif %}</button>
     </form>
     <button class="btn btn-sm btn-outline-info" id="cal-preview-btn">Preview events</button>
-    <form method="post" action="{% url 'ui:calendar_ics_build' cid %}" class="d-inline">{% csrf_token %}
-      <button class="btn btn-sm btn-success" title="Build .ics file (works with any calendar)">Build .ics</button>
+    <form method="post" action="{% url 'ui:calendar_sync_run' cid %}" class="d-flex gap-2 align-items-center">{% csrf_token %}
+      <input class="form-control form-control-sm" name="calendar_id"
+             style="width:220px;" value="soleksii@nd.edu" placeholder="your calendar email">
+      <button class="btn btn-sm btn-success" title="Push events directly via service account">Push to Calendar</button>
     </form>
-    <a class="btn btn-sm btn-outline-success" href="{% url 'ui:calendar_ics' cid %}"
-       title="Download then double-click to import to Google/Apple/Outlook">Download .ics</a>
+    <form method="post" action="{% url 'ui:calendar_ics_build' cid %}" class="d-inline">{% csrf_token %}
+      <button class="btn btn-sm btn-outline-success" title="Generate .ics file as fallback">Build .ics</button>
+    </form>
+    <a class="btn btn-sm btn-outline-secondary" href="{% url 'ui:calendar_ics' cid %}">Download .ics</a>
   </div>
+</div>
+
+<div class="alert alert-info small mb-3">
+  <strong>One-time setup for "Push to Calendar":</strong>
+  Open <a href="https://calendar.google.com/calendar/u/0/r/settings/calendar/c29sZWtzaWlAbmQuZWR1" target="_blank">your calendar settings</a> →
+  scroll to <em>Share with specific people or groups</em> → Add people →
+  <code>canvas-cal@nd-canvas-ocr-1777818991.iam.gserviceaccount.com</code> →
+  permission <em>Make changes to events</em> → Send.
 </div>
 
 <div id="cal-preview" class="card mb-3 d-none">

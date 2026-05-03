@@ -12,5 +12,6 @@ db.sqlite3
 */_ocr/
 .llm_cache/
 */.panopto_skip
+secrets/
 */chroma/
 */_snippets/
