@@ -175,9 +175,12 @@ def course_detail(request, cid: int):
     sys.path.insert(0, str(ROOT))
     from topic_graph import GRAPH
 
+    enriched = []
     for r in gap_top:
         t = r["topic"]
         total = len(problems_by_topic.get(t, []))
+        if total == 0:
+            continue  # no extractable problems — hide from priorities table
         done = len(progress["done"].get(t, []))
         r["progress_done"] = done
         r["progress_total"] = total
@@ -185,6 +188,8 @@ def course_detail(request, cid: int):
         r["label"] = GRAPH.get(t, {}).get("label", t)
         r["chapter"] = GRAPH.get(t, {}).get("ch")
         r["materials"] = _materials_for_topic(cdir, t)
+        enriched.append(r)
+    gap_top = enriched
 
     overall_total = sum(len(v) for v in problems_by_topic.values())
     overall_done = sum(len(v) for v in progress["done"].values())
