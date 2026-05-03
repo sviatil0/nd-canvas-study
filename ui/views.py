@@ -795,6 +795,7 @@ def calendar_preview(request, cid: int):
     sys.path.insert(0, str(ROOT))
     from calendar_sync import (
         extract_events_from_class_info, extract_events_from_assignments,
+        categorize_event,
     )
     info_md = ""
     info_path = cdir / "bundles" / "CLASS_INFO.md"
@@ -809,6 +810,11 @@ def calendar_preview(request, cid: int):
             continue
         seen.add(key)
         uniq.append(e)
+    for e in uniq:
+        emoji, kind, color = categorize_event(e)
+        e["emoji"] = emoji
+        e["kind"] = kind
+        e["color"] = color
     return HttpResponse(json.dumps({"events": uniq, "count": len(uniq)}, indent=2),
                         content_type="application/json")
 

@@ -359,7 +359,10 @@ const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.
       </div>
     </div>
     <div class="card-body">
-      <p class="mb-3"><strong>Stem:</strong> {{ p.stem }}…</p>
+      <details class="mb-2">
+        <summary class="text-primary" style="cursor:pointer;"><strong>Stem:</strong> {{ p.stem }}…</summary>
+        <div class="mt-2 p-2 bg-light border rounded" style="white-space:pre-wrap; font-size:14px;">{{ p.full_body|default:p.stem }}</div>
+      </details>
       <details class="mb-2">
         <summary class="text-primary" style="cursor:pointer;">Show page snippet</summary>
         <img src="{% url 'ui:snippet' cid p.source p.page %}" class="img-fluid border mt-2" loading="lazy">
@@ -573,9 +576,9 @@ function pageCountUrl(rel) {
   return `/course/{{ cid }}/page_count/${rel}/`;
 }
 
-async function loadMaterial(item, page) {
-  const rel = item.dataset.matRel;
-  const wrap = item.parentElement.querySelector('.accordion-body');
+async function loadMaterial(itemEl, rel, page) {
+  if (!rel) return;
+  const wrap = itemEl.querySelector('.accordion-body');
   const img = wrap.querySelector('.mat-image');
   const ocrBox = wrap.querySelector('.mat-ocr');
   const pageEl = wrap.querySelector('.mat-page');
@@ -585,12 +588,20 @@ async function loadMaterial(item, page) {
     matState[rel] = { page: 1, pages: 1 };
     try {
       const r = await fetch(pageCountUrl(rel));
-      const d = await r.json();
-      matState[rel].pages = d.pages;
+      if (r.ok) {
+        const d = await r.json();
+        matState[rel].pages = d.pages || 1;
+      }
     } catch (e) { /* keep 1 */ }
     try {
       const r = await fetch(ocrUrl(rel));
-      ocrBox.textContent = r.ok ? await r.text() : '(no OCR available — run vertex OCR)';
+      if (r.ok) {
+        ocrBox.textContent = await r.text();
+      } else if (r.status === 404) {
+        ocrBox.textContent = '(no OCR cache for this file — re-run ocr_vertex.py)';
+      } else {
+        ocrBox.textContent = 'OCR fetch error: HTTP ' + r.status;
+      }
     } catch (e) {
       ocrBox.textContent = 'OCR fetch failed: ' + e;
     }
@@ -601,19 +612,29 @@ async function loadMaterial(item, page) {
   img.src = snippetUrl(rel, matState[rel].page);
 }
 
-document.querySelectorAll('#mat-accordion .accordion-button').forEach(btn => {
-  btn.addEventListener('click', () => loadMaterial(btn, null));
+// Trigger load on accordion-collapse show (Bootstrap event), not raw click
+document.querySelectorAll('#mat-accordion .accordion-collapse').forEach(coll => {
+  coll.addEventListener('show.bs.collapse', () => {
+    const item = coll.closest('.accordion-item');
+    const btn = item.querySelector('.accordion-button');
+    loadMaterial(item, btn.dataset.matRel, null);
+  });
 });
+
 document.querySelectorAll('.mat-prev').forEach(b => {
-  b.addEventListener('click', () => {
-    const item = b.closest('.accordion-item').querySelector('.accordion-button');
-    loadMaterial(item, (matState[item.dataset.matRel]?.page || 1) - 1);
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const item = b.closest('.accordion-item');
+    const rel = item.querySelector('.accordion-button').dataset.matRel;
+    loadMaterial(item, rel, (matState[rel]?.page || 1) - 1);
   });
 });
 document.querySelectorAll('.mat-next').forEach(b => {
-  b.addEventListener('click', () => {
-    const item = b.closest('.accordion-item').querySelector('.accordion-button');
-    loadMaterial(item, (matState[item.dataset.matRel]?.page || 1) + 1);
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const item = b.closest('.accordion-item');
+    const rel = item.querySelector('.accordion-button').dataset.matRel;
+    loadMaterial(item, rel, (matState[rel]?.page || 1) + 1);
   });
 });
 

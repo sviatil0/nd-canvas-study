@@ -134,12 +134,15 @@ def to_ics(events: list[dict], course_label: str, out_path: Path) -> Path:
     ]
     now = _dt.utcnow().strftime("%Y%m%dT%H%M%SZ")
     for i, e in enumerate(events):
+        emoji, kind, _color = categorize_event(e)
         date_compact = e["date"].replace("-", "")
         uid = f"ndcanvas-{course_label}-{date_compact}-{i}@local"
-        title = e["title"].replace("\n", " ").replace(",", "\\,")
+        raw_title = e["title"].replace("\n", " ").replace(",", "\\,")
+        title = f"{emoji} [{course_label.upper()}] {kind}: {raw_title}"
         lines.append("BEGIN:VEVENT")
         lines.append(f"UID:{uid}")
         lines.append(f"DTSTAMP:{now}")
+        lines.append(f"CATEGORIES:{kind}")
         if e.get("datetime_iso"):
             dt = _dt.fromisoformat(e["datetime_iso"])
             start = dt.strftime("%Y%m%dT%H%M%S")
@@ -149,8 +152,16 @@ def to_ics(events: list[dict], course_label: str, out_path: Path) -> Path:
         else:
             lines.append(f"DTSTART;VALUE=DATE:{date_compact}")
             lines.append(f"DTEND;VALUE=DATE:{date_compact}")
-        lines.append(f"SUMMARY:[{course_label}] {title}")
-        lines.append(f"DESCRIPTION:Auto-generated from Canvas. Source: {e.get('src', '')}")
+        lines.append(f"SUMMARY:{title}")
+        lines.append(f"DESCRIPTION:Auto-generated from Canvas. Type: {kind}. Source: {e.get('src', '')}")
+        # Apple Calendar uses VALARM; Google Calendar uses overrides via API only,
+        # but VALARM still works on import.
+        if kind in ("EXAM", "FINAL EXAM"):
+            lines.append("BEGIN:VALARM")
+            lines.append("TRIGGER:-PT24H")
+            lines.append("ACTION:DISPLAY")
+            lines.append(f"DESCRIPTION:24h until {raw_title}")
+            lines.append("END:VALARM")
         lines.append("END:VEVENT")
     lines.append("END:VCALENDAR")
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -176,16 +187,68 @@ def get_calendar_service():
     return build("calendar", "v3", credentials=creds, cache_discovery=False)
 
 
+# Google Calendar colorId: 11=red(tomato), 6=orange(tangerine), 5=yellow(banana),
+# 10=green(basil), 7=cyan(peacock), 9=blue(blueberry), 3=purple(grape), 8=gray(graphite)
+COLOR_EXAM = "11"     # red
+COLOR_QUIZ = "6"      # orange
+COLOR_HW   = "9"      # blue
+COLOR_REVIEW = "5"    # yellow
+COLOR_OTHER = "8"     # gray
+
+
+def categorize_event(event: dict) -> tuple[str, str, str]:
+    """Return (emoji, kind_label, colorId) for a given extracted event."""
+    title = event.get("title", "").lower()
+    if "final exam" in title:
+        return ("🎯", "FINAL EXAM", COLOR_EXAM)
+    if "exam" in title and "review" in title:
+        return ("📖", "EXAM REVIEW", COLOR_REVIEW)
+    if "exam" in title and ("extra credit" in title or "optional" in title):
+        return ("⭐", "EXAM EXTRA CREDIT", COLOR_REVIEW)
+    if "exam" in title:
+        return ("🚨", "EXAM", COLOR_EXAM)
+    if "quiz" in title:
+        return ("📝", "QUIZ", COLOR_QUIZ)
+    if title.startswith("hw") or "homework" in title:
+        return ("📚", "HW", COLOR_HW)
+    if "due" in title:
+        return ("📅", "DUE", COLOR_HW)
+    if "review" in title:
+        return ("📖", "REVIEW", COLOR_REVIEW)
+    return ("•", "EVENT", COLOR_OTHER)
+
+
 def upsert_event(service, calendar_id: str, event: dict, course_label: str,
                  dry_run: bool = False) -> str:
-    title = f"[{course_label}] {event['title']}"
-    # Check existing by extended-property tag
-    tag = f"ndcanvas:{course_label}:{event['date']}:{event['title'][:40]}"
+    emoji, kind, color = categorize_event(event)
+    raw_title = event["title"]
+    # Avoid double-prefixing if Gemini already wrote "Exam 1" etc.
+    title = f"{emoji} [{course_label.upper()}] {kind}: {raw_title}"
+    tag = f"ndcanvas:{course_label}:{event['date']}:{raw_title[:40]}"
     body = {
         "summary": title,
-        "description": f"Auto-synced from Canvas via nd-canvas-study.\nSource: {event.get('src','')}",
-        "extendedProperties": {"private": {"ndcanvas_tag": tag}},
+        "description": (
+            f"Auto-synced from Canvas via nd-canvas-study.\n"
+            f"Type: {kind}\n"
+            f"Source: {event.get('src','')}"
+        ),
+        "colorId": color,
+        "extendedProperties": {"private": {"ndcanvas_tag": tag, "kind": kind}},
     }
+    # Reminders for exams: 1 day + 1 hour before
+    if kind in ("EXAM", "FINAL EXAM"):
+        body["reminders"] = {
+            "useDefault": False,
+            "overrides": [
+                {"method": "popup", "minutes": 24 * 60},
+                {"method": "popup", "minutes": 60},
+            ],
+        }
+    elif kind in ("HW", "QUIZ", "DUE"):
+        body["reminders"] = {
+            "useDefault": False,
+            "overrides": [{"method": "popup", "minutes": 4 * 60}],
+        }
     if event.get("datetime_iso"):
         end = datetime.fromisoformat(event["datetime_iso"]) + timedelta(hours=1)
         body["start"] = {"dateTime": event["datetime_iso"]}

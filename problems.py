@@ -275,7 +275,8 @@ def build_study_plan(course_dir: Path) -> None:
                 topic = classify_with_chapter_bias(body, rel)
                 if not topic:
                     continue
-                stem = re.sub(r"\s+", " ", body[:320]).strip()
+                full_body = re.sub(r"\s+", " ", body).strip()
+                stem = full_body[:320]
                 if not looks_like_problem(stem):
                     continue
                 offset = joined.find(body[:60]) if body else -1
@@ -293,6 +294,7 @@ def build_study_plan(course_dir: Path) -> None:
                     "page": page,
                     "problem": num,
                     "stem": stem,
+                    "full_body": full_body,
                     "chapter": ch,
                     "difficulty": d_score,
                     "difficulty_label": d_label,

@@ -123,10 +123,26 @@ document.getElementById('cal-preview-btn').addEventListener('click', async () =>
       list.textContent = 'No events found. Generate Class info first or wait for sync to finish.';
       return;
     }
+    const colorMap = {
+      "11":"bg-danger","6":"bg-warning text-dark","5":"bg-warning text-dark",
+      "9":"bg-primary","10":"bg-success","7":"bg-info text-dark",
+      "3":"bg-purple","8":"bg-secondary"
+    };
     d.events.forEach(e => {
       const row = document.createElement('div');
-      row.textContent = '· ' + e.date + (e.time ? ' ' + e.time : '') + '  —  '
-                       + e.title + '  [' + e.src + ']';
+      row.className = 'd-flex align-items-center gap-2 mb-1';
+      const emoji = document.createElement('span');
+      emoji.textContent = e.emoji || '•';
+      const dateEl = document.createElement('span');
+      dateEl.className = 'text-muted small';
+      dateEl.style.minWidth = '110px';
+      dateEl.textContent = e.date + (e.time ? ' ' + e.time : '');
+      const badge = document.createElement('span');
+      badge.className = 'badge ' + (colorMap[e.color] || 'bg-secondary');
+      badge.textContent = e.kind || '';
+      const title = document.createElement('span');
+      title.textContent = e.title;
+      row.append(emoji, dateEl, badge, title);
       list.appendChild(row);
     });
   } catch (e) {
