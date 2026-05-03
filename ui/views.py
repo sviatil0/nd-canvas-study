@@ -695,6 +695,44 @@ def build_class_info(request, cid: int):
     return redirect("ui:class_info", cid=cid)
 
 
+def calendar_preview(request, cid: int):
+    """Return JSON list of events the calendar sync would create/update."""
+    cdir = _course_dir_for(cid)
+    sys.path.insert(0, str(ROOT))
+    from calendar_sync import (
+        extract_events_from_class_info, extract_events_from_assignments,
+    )
+    info_md = ""
+    info_path = cdir / "bundles" / "CLASS_INFO.md"
+    if info_path.exists():
+        info_md = info_path.read_text()
+    events = extract_events_from_class_info(info_md) + extract_events_from_assignments(cdir)
+    seen = set()
+    uniq = []
+    for e in events:
+        key = (e["date"], e["title"][:60])
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(e)
+    return HttpResponse(json.dumps({"events": uniq, "count": len(uniq)}, indent=2),
+                        content_type="application/json")
+
+
+@require_POST
+def calendar_sync_run(request, cid: int):
+    cdir = _course_dir_for(cid)
+    code, out = _run([PYTHON, "calendar_sync.py", "--course-dir", str(cdir)])
+    if code == 0:
+        # Pull a count from output for nicer message
+        created = out.count("CREATED")
+        updated = out.count("UPDATED")
+        messages.success(request, f"Calendar synced: {created} created, {updated} updated.")
+    else:
+        messages.error(request, f"Calendar sync failed: {out[-1500:]}")
+    return redirect("ui:class_info", cid=cid)
+
+
 def jobs_status(request, cid: int):
     """Return status of background OCR job by parsing /tmp/ocr_*.log files."""
     import re

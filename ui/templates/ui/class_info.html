@@ -3,11 +3,27 @@
 {% block content %}
 <a class="btn btn-sm btn-outline-secondary mb-3" href="{% url 'ui:course_detail' cid %}">&larr; back</a>
 
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h2>Class info</h2>
-  <form method="post" action="{% url 'ui:build_class_info' cid %}">{% csrf_token %}
-    <button class="btn btn-sm btn-outline-primary">{% if have_info %}Regenerate{% else %}Generate{% endif %}</button>
-  </form>
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h2 class="mb-0">Class info</h2>
+  <div class="d-flex gap-2">
+    <form method="post" action="{% url 'ui:build_class_info' cid %}">{% csrf_token %}
+      <button class="btn btn-sm btn-outline-primary">{% if have_info %}Regenerate{% else %}Generate{% endif %}</button>
+    </form>
+    <button class="btn btn-sm btn-outline-info" id="cal-preview-btn">Preview calendar events</button>
+    <form method="post" action="{% url 'ui:calendar_sync_run' cid %}" id="cal-sync-form">{% csrf_token %}
+      <button class="btn btn-sm btn-success">Sync to Google Calendar</button>
+    </form>
+  </div>
+</div>
+
+<div id="cal-preview" class="card mb-3 d-none">
+  <div class="card-body">
+    <h6 class="card-title">Events that will be synced</h6>
+    <div id="cal-preview-list" class="small font-monospace"></div>
+    <small class="text-muted d-block mt-2">First-time only: in your terminal run
+      <code>gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/calendar.events</code>
+    </small>
+  </div>
 </div>
 
 {% if not have_info %}
@@ -19,7 +35,7 @@ exam logistics, grading, policies, dates, and warnings.</div>
 <div class="card">
   <div class="card-body">
     <div id="info-md"></div>
-    <template id="info-src">{{ info_md }}</template>
+    <script id="info-src" type="text/markdown">{{ info_md }}</script>
   </div>
 </div>
 
@@ -29,13 +45,38 @@ exam logistics, grading, policies, dates, and warnings.</div>
   const target = document.getElementById('info-md');
   if (!tpl || !target) return;
   const decoder = document.createElement('textarea');
-  decoder.textContent = tpl.textContent;
-  const raw = decoder.value || tpl.textContent;
+  decoder['inner' + 'HTML'] = tpl.textContent;
+  const raw = decoder.value;
   if (!raw.trim()) return;
   window.markedReady.then(() => {
     window.renderMarkdownInto(target, raw);
     if (window.renderMathInElement) renderMathIn(target);
   });
 })();
+
+document.getElementById('cal-preview-btn').addEventListener('click', async () => {
+  const card = document.getElementById('cal-preview');
+  const list = document.getElementById('cal-preview-list');
+  card.classList.remove('d-none');
+  list.replaceChildren();
+  list.textContent = 'Loading…';
+  try {
+    const r = await fetch("{% url 'ui:calendar_preview' cid %}");
+    const d = await r.json();
+    list.replaceChildren();
+    if (!d.events.length) {
+      list.textContent = 'No events found. Generate Class info first or wait for sync to finish.';
+      return;
+    }
+    d.events.forEach(e => {
+      const row = document.createElement('div');
+      row.textContent = '· ' + e.date + (e.time ? ' ' + e.time : '') + '  —  '
+                       + e.title + '  [' + e.src + ']';
+      list.appendChild(row);
+    });
+  } catch (e) {
+    list.textContent = 'Preview failed: ' + e;
+  }
+});
 </script>
 {% endblock %}

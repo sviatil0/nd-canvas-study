@@ -48,7 +48,7 @@
 <div class="card mb-4" id="summary-card" {% if not have_summary %}hidden{% endif %}>
   <div class="card-body">
     <div id="summary-md"></div>
-    <template id="summary-src">{{ summary_md }}</template>
+    <script id="summary-src" type="text/markdown">{{ summary_md }}</script>
   </div>
 </div>
 <div class="alert alert-secondary" id="summary-empty" {% if have_summary %}hidden{% endif %}>
