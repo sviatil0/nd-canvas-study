@@ -1,12 +1,12 @@
 {% extends "ui/base.html" %}
-{% block title %}OCR jobs · {{ cid }}{% endblock %}
+{% block title %}Background jobs · {{ cid }}{% endblock %}
 {% block content %}
 <a class="btn btn-sm btn-outline-secondary mb-3" href="{% url 'ui:course_detail' cid %}">&larr; back</a>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
-    <h2 class="mb-0">OCR jobs</h2>
-    <small class="text-muted">Live status of background OCR runs (Vertex / Claude / Gemini / Tesseract). For Canvas sync progress, see the <a href="{% url 'ui:sync_view' cid %}">Sync</a> page.</small>
+    <h2 class="mb-0">Background jobs</h2>
+    <small class="text-muted">Live status of OCR + summary generation. For Canvas sync progress, see the <a href="{% url 'ui:sync_view' cid %}">Sync</a> page.</small>
   </div>
   <span class="text-muted small" id="last-refresh">refreshing every 3s…</span>
 </div>
@@ -51,7 +51,8 @@ function renderJobs(jobs) {
     head.className = 'card-header d-flex justify-content-between';
     const left = document.createElement('span');
     const nameSpan = document.createElement('strong');
-    nameSpan.textContent = j.name + ' OCR';
+    const isOcr = ['vertex','claude','gemini','tesseract'].includes(j.name);
+    nameSpan.textContent = j.name + (isOcr ? ' OCR' : '');
     left.appendChild(nameSpan);
     const statusBadge = document.createElement('span');
     statusBadge.className = 'badge ms-2 ' + (j.finished ? 'bg-success' : 'bg-primary');
