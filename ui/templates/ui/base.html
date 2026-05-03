@@ -80,6 +80,7 @@
         const ann = k.querySelector('annotation[encoding="application/x-tex"]');
         if (!ann) return;
         const src = ann.textContent.trim();
+        if (!src || src.length < 2) return;
         const isBlock = k.classList.contains('katex-display') ||
                         k.parentElement?.classList.contains('katex-display');
         const wrapped = isBlock ? '$$' + src + '$$' : '$' + src + '$';

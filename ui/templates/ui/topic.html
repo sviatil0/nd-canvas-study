@@ -575,11 +575,19 @@ document.querySelectorAll('.grade-btn').forEach(btn => {
 
 // --- Pretty-print problem full body when expanded ---
 function formatProblemBody(raw) {
-  // Split off MC choices (A./B./C./D./E.) into separate lines
   let body = raw.replace(/\s+/g, ' ').trim();
-  // Insert breaks before " A. " " B. " etc. when followed by a capitalized word/number
+  // Replace LaTeX \quad-separated number lists with plain spaced numbers
+  // (these are data sets, not display math)
+  body = body.replace(/\$\$([\d.\s\\quad]+)\$\$/g, (_m, inner) => {
+    return inner.replace(/\\quad/g, '  ').replace(/\s+/g, ' ').trim();
+  });
+  // Same for $...$ inline if it's just numbers
+  body = body.replace(/\$([\d.\s\\quad]+)\$/g, (_m, inner) => {
+    return inner.replace(/\\quad/g, '  ').replace(/\s+/g, ' ').trim();
+  });
+  // MC choices on separate lines
   body = body.replace(/\s([A-E])\.\s+(?=[A-Z0-9])/g, '\n- **$1.** ');
-  // Keep numbered subparts on their own lines
+  // Subparts (a)/(b)/(c)
   body = body.replace(/\s\(([a-h])\)\s+/g, '\n- **($1)** ');
   // Stem prefix bold
   body = body.replace(/^(\d+)\.\s+\(?(\d+\s*points?)?\)?\s*/i,
