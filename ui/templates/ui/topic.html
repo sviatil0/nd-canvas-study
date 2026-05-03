@@ -379,7 +379,7 @@ document.querySelectorAll('.done-toggle').forEach(cb => {
 document.querySelectorAll('.solve-btn').forEach(btn => {
   btn.addEventListener('click', async () => {
     const target = document.getElementById(btn.dataset.target);
-    setStatus(target, 'info', 'Solving… (Claude is thinking)');
+    setStatus(target, 'info', 'Solving…');
     btn.disabled = true;
     const fd = new FormData();
     fd.append('problem', btn.dataset.problem);

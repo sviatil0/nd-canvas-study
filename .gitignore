@@ -10,5 +10,6 @@ db.sqlite3
 .ui.pid
 */_attempts/
 */_ocr/
+.llm_cache/
 */chroma/
 */_snippets/
