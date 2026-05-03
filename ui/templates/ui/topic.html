@@ -456,7 +456,7 @@ document.querySelectorAll('.problem-card').forEach(card => {
     fileInput.value = '';
     refreshThumbs(card);
   });
-  ta.addEventListener('paste', (e) => {
+  function handlePaste(e) {
     const items = e.clipboardData?.items || [];
     let added = false;
     for (const it of items) {
@@ -466,7 +466,9 @@ document.querySelectorAll('.problem-card').forEach(card => {
       }
     }
     if (added) { e.preventDefault(); refreshThumbs(card); }
-  });
+  }
+  ta.addEventListener('paste', handlePaste);
+  card.addEventListener('paste', handlePaste);
   card.addEventListener('dragover', e => e.preventDefault());
   card.addEventListener('drop', e => {
     if (!e.dataTransfer?.files?.length) return;
