@@ -248,6 +248,27 @@ def view_bundle(request, cid: int, cat: str):
     return HttpResponse(f.read_text(), content_type="text/plain; charset=utf-8")
 
 
+def ocr_text(request, cid: int, rel: str):
+    cdir = _course_dir_for(cid)
+    f = cdir / "_ocr" / (rel.replace("/", "__") + ".txt")
+    if not f.exists():
+        raise Http404
+    return HttpResponse(f.read_text(), content_type="text/plain; charset=utf-8")
+
+
+def page_count(request, cid: int, rel: str):
+    cdir = _course_dir_for(cid)
+    pdf = (cdir / rel).resolve()
+    if not str(pdf).startswith(str(cdir.resolve())) or not pdf.exists():
+        raise Http404
+    try:
+        from pypdf import PdfReader
+        n = len(PdfReader(str(pdf)).pages)
+    except Exception:
+        n = 1
+    return HttpResponse(json.dumps({"pages": n}), content_type="application/json")
+
+
 def serve_file(request, cid: int, rel: str):
     cdir = _course_dir_for(cid)
     target = (cdir / rel).resolve()
@@ -320,6 +341,16 @@ def topic_detail(request, cid: int, topic: str):
         annotated.append(ap)
     done_count = sum(1 for p in annotated if p["done"])
 
+    materials = _materials_for_topic(cdir, topic)
+    # Annotate with rendered URLs + OCR cache key
+    for m in materials:
+        rel = m["rel"]
+        m["pdf_url"] = reverse("ui:serve_file", args=[cid, rel])
+        m["ocr_key"] = rel.replace("/", "__") + ".txt"
+        m["has_ocr"] = (cdir / "_ocr" / m["ocr_key"]).exists()
+        # First-page snippet
+        m["snippet1_url"] = reverse("ui:snippet", args=[cid, rel, 1])
+
     return render(request, "ui/topic.html", {
         "cid": cid,
         "topic": topic,
@@ -332,6 +363,7 @@ def topic_detail(request, cid: int, topic: str):
         "done_count": done_count,
         "total_count": len(annotated),
         "pct": int(round(100 * done_count / max(len(annotated), 1))),
+        "materials": materials,
         "sort_by": sort_by,
         "sort_options": [
             ("likelihood", "Likelihood (most likely first)"),
