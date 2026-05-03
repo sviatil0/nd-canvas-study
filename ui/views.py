@@ -108,6 +108,38 @@ def sync_course(request, cid: int):
     return redirect("ui:course_detail", cid=cid)
 
 
+def _materials_for_topic(cdir: Path, topic: str) -> list[dict]:
+    """Find in-class + HW PDFs whose chapter folder matches the topic's chapter."""
+    sys.path.insert(0, str(ROOT))
+    from topic_graph import GRAPH
+    info = GRAPH.get(topic, {})
+    ch = info.get("ch")
+    if not ch:
+        return []
+    modules_root = cdir / "modules"
+    if not modules_root.exists():
+        return []
+    out = []
+    chapter_token = f"chapter-{ch}-"
+    chapter_token_alt = f"chapters-{ch}-"
+    for d in modules_root.iterdir():
+        if not d.is_dir():
+            continue
+        name = d.name.lower()
+        if not (name.startswith(chapter_token) or name.startswith(chapter_token_alt) or name == f"chapter-{ch}"):
+            continue
+        for pdf in sorted(d.rglob("*.pdf")):
+            kind = "in_class" if "inclass" in pdf.name.lower() else (
+                "hw_key" if "key" in pdf.name.lower() else (
+                "hw" if "hw" in pdf.name.lower() else "other"))
+            out.append({
+                "rel": str(pdf.relative_to(cdir)),
+                "name": pdf.name,
+                "kind": kind,
+            })
+    return out
+
+
 def _course_dir_for(cid: int) -> Path:
     if DOWNLOADS.exists():
         for d in DOWNLOADS.iterdir():
@@ -139,6 +171,10 @@ def course_detail(request, cid: int):
         problems_by_topic = json.loads(problems_file.read_text())
     else:
         problems_by_topic = {}
+
+    sys.path.insert(0, str(ROOT))
+    from topic_graph import GRAPH
+
     for r in gap_top:
         t = r["topic"]
         total = len(problems_by_topic.get(t, []))
@@ -146,6 +182,9 @@ def course_detail(request, cid: int):
         r["progress_done"] = done
         r["progress_total"] = total
         r["progress_pct"] = int(round(100 * done / max(total, 1))) if total else 0
+        r["label"] = GRAPH.get(t, {}).get("label", t)
+        r["chapter"] = GRAPH.get(t, {}).get("ch")
+        r["materials"] = _materials_for_topic(cdir, t)
 
     overall_total = sum(len(v) for v in problems_by_topic.values())
     overall_done = sum(len(v) for v in progress["done"].values())

@@ -66,15 +66,19 @@
   <div class="card-body">
     <h5 class="card-title">Top under-prepared topics (exam vs HW/in-class)</h5>
     <table class="table table-sm align-middle">
-      <thead><tr><th>Topic</th><th>Exam hits</th><th>Prep hits</th><th>Gap (pp)</th><th>Progress</th></tr></thead>
+      <thead><tr><th>Topic</th><th>Exam</th><th>Prep</th><th>Gap</th><th>Progress</th><th>Study materials</th></tr></thead>
       <tbody>
       {% for r in gap_top %}
         <tr>
-          <td><a href="{% url 'ui:topic_detail' cid r.topic %}"><strong>{{ r.topic }}</strong></a></td>
+          <td>
+            <a class="btn btn-sm btn-primary" href="{% url 'ui:topic_detail' cid r.topic %}">
+              {% if r.chapter %}Ch{{ r.chapter }} · {% endif %}{{ r.label }}
+            </a>
+          </td>
           <td>{{ r.exam_hits }}</td>
           <td>{{ r.prep_hits }}</td>
           <td>{{ r.share_gap_pp }}</td>
-          <td style="min-width:200px;">
+          <td style="min-width:160px;">
             <div class="d-flex align-items-center gap-2">
               <div class="progress flex-grow-1" style="height:8px;">
                 <div class="progress-bar bg-success" style="width: {{ r.progress_pct }}%;"></div>
@@ -82,10 +86,27 @@
               <small class="text-muted">{{ r.progress_done }}/{{ r.progress_total }}</small>
             </div>
           </td>
+          <td>
+            {% for m in r.materials %}
+              <a class="badge text-decoration-none {% if m.kind == 'in_class' %}bg-info text-dark{% elif m.kind == 'hw_key' %}bg-success{% elif m.kind == 'hw' %}bg-warning text-dark{% else %}bg-secondary{% endif %}"
+                 href="{% url 'ui:serve_file' cid m.rel %}" target="_blank"
+                 title="{{ m.name }}">
+                {{ m.kind }}
+              </a>
+            {% empty %}
+              <span class="text-muted small">none found</span>
+            {% endfor %}
+          </td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
+    <small class="text-muted">
+      Click topic name → concept summary + prereqs + problems.
+      Badges: <span class="badge bg-info text-dark">in_class</span> notes,
+      <span class="badge bg-success">hw_key</span> solutions,
+      <span class="badge bg-warning text-dark">hw</span> problems.
+    </small>
   </div>
 </div>
 {% endif %}
