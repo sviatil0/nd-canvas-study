@@ -153,6 +153,7 @@ def main() -> int:
     if args.with_summaries:
         run([PYTHON, "summarize_topics.py", "--course-dir", str(cdir)])
     run([PYTHON, "render_graph.py", "--course-dir", str(cdir)], check=False)
+    run([PYTHON, "likelihood.py", "--course-dir", str(cdir)], check=False)
 
     plan = cdir / "bundles" / "STUDY_PLAN.md"
     gap = cdir / "bundles" / "topic_gap_report.md"

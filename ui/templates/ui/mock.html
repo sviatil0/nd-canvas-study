@@ -1,0 +1,205 @@
+{% extends "ui/base.html" %}
+{% block title %}Mock exam · {{ cid }}{% endblock %}
+{% block content %}
+<a class="btn btn-sm btn-outline-secondary mb-3" href="{% url 'ui:course_detail' cid %}">&larr; back</a>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2>Mock exam</h2>
+  <div class="d-flex align-items-center gap-3">
+    <a class="btn btn-sm btn-outline-info" data-bs-toggle="modal" data-bs-target="#formulaModal">Formula sheet (press F)</a>
+    <span class="badge bg-dark fs-5" id="timer">--:--</span>
+  </div>
+</div>
+
+<form class="card mb-4" method="get">
+  <div class="card-body">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-6">
+        <label class="form-label small">Topics (leave empty = all). Cmd/Ctrl-click to multi-select.</label>
+        <select class="form-select" name="topic" multiple size="6">
+          {% for t in available_topics %}
+            <option value="{{ t }}" {% if t in selected_topics %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small"># questions</label>
+        <input class="form-control" name="n" type="number" value="{{ n }}" min="1" max="50">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small">Minutes</label>
+        <input class="form-control" name="minutes" type="number" value="{{ minutes }}" min="1" max="180">
+      </div>
+      <div class="col-md-2">
+        <button class="btn btn-primary w-100">Regenerate</button>
+      </div>
+    </div>
+  </div>
+</form>
+
+<div class="d-flex gap-2 mb-3">
+  <button id="reveal-all" class="btn btn-outline-secondary btn-sm">Show all snippets</button>
+  <button id="hide-all" class="btn btn-outline-secondary btn-sm">Hide all snippets</button>
+</div>
+
+{% for p in problems %}
+<div class="card mb-4 mock-q" id="q{{ forloop.counter }}">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <div>
+      <span class="badge bg-primary">Q{{ forloop.counter }}</span>
+      <span class="badge bg-secondary">{{ p.topic_label }}</span>
+      <span class="text-muted small">{{ p.source }} p{{ p.page }}</span>
+    </div>
+    <button class="btn btn-sm btn-outline-success done-mock" data-key="{{ p.source }}#p{{ p.page }}#{{ p.problem }}" data-topic="{{ p.topic }}">Mark solved</button>
+  </div>
+  <div class="card-body">
+    <p><strong>Stem:</strong> {{ p.stem }}…</p>
+    <details class="snippet-detail">
+      <summary class="text-primary" style="cursor:pointer;">Show problem snippet</summary>
+      <img src="{% url 'ui:snippet' cid p.source p.page %}" class="img-fluid border mt-2" loading="lazy">
+    </details>
+    <hr>
+    <label class="form-label small text-muted">Your answer:</label>
+    <textarea class="form-control mb-2 attempt" rows="4" placeholder="$F = MSTr/MSE = ...$"></textarea>
+    <div class="d-flex gap-2">
+      <button class="btn btn-success grade-btn"
+              data-target="g{{ forloop.counter }}"
+              data-problem="{{ p.stem }}"
+              data-topic="{{ p.topic }}">Grade my answer</button>
+      <button class="btn btn-outline-warning solve-btn"
+              data-target="g{{ forloop.counter }}"
+              data-problem="{{ p.stem }}"
+              data-topic="{{ p.topic }}">Show full solution</button>
+    </div>
+    <div id="g{{ forloop.counter }}" class="mt-3"></div>
+  </div>
+</div>
+{% endfor %}
+
+<div class="modal fade" id="formulaModal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Formula sheet</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <iframe src="{% url 'ui:formulas' cid %}" style="width:100%; height:75vh; border:none;"></iframe>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.split('=')[1] || '';
+
+let totalSec = {{ minutes }} * 60;
+const timerEl = document.getElementById('timer');
+function fmt(s) {
+  const m = Math.floor(s / 60), r = s % 60;
+  return String(m).padStart(2,'0') + ':' + String(r).padStart(2,'0');
+}
+timerEl.textContent = fmt(totalSec);
+const timerInt = setInterval(() => {
+  totalSec -= 1;
+  timerEl.textContent = fmt(Math.max(0, totalSec));
+  if (totalSec <= 60) timerEl.classList.add('bg-warning');
+  if (totalSec <= 0) {
+    timerEl.classList.add('bg-danger');
+    clearInterval(timerInt);
+  }
+}, 1000);
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'f' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) {
+    e.preventDefault();
+    new bootstrap.Modal(document.getElementById('formulaModal')).show();
+  }
+});
+
+document.getElementById('reveal-all').onclick = () =>
+  document.querySelectorAll('.snippet-detail').forEach(d => d.open = true);
+document.getElementById('hide-all').onclick = () =>
+  document.querySelectorAll('.snippet-detail').forEach(d => d.open = false);
+
+function setStatus(t, kind, text) {
+  const d = document.createElement('div');
+  d.className = 'alert alert-' + kind;
+  d.textContent = text;
+  t.replaceChildren(d);
+}
+function setRendered(t, label, text, color) {
+  const w = document.createElement('div');
+  w.className = 'alert alert-' + color;
+  const head = document.createElement('strong');
+  head.textContent = label;
+  w.appendChild(head);
+  const body = document.createElement('div');
+  body.className = 'mt-2';
+  window.renderMarkdownInto(body, text);
+  w.appendChild(body);
+  t.replaceChildren(w);
+  if (window.renderMathInElement) renderMathIn(w);
+}
+
+document.querySelectorAll('.grade-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const target = document.getElementById(btn.dataset.target);
+    const card = btn.closest('.mock-q');
+    const attempt = card.querySelector('.attempt').value.trim();
+    if (!attempt) { setStatus(target, 'warning', 'Write your attempt first.'); return; }
+    setStatus(target, 'info', 'Grading…');
+    btn.disabled = true;
+    const fd = new FormData();
+    fd.append('problem', btn.dataset.problem);
+    fd.append('topic', btn.dataset.topic);
+    fd.append('attempt', attempt);
+    try {
+      const r = await fetch("{% url 'ui:grade_answer' cid %}", {
+        method: 'POST', headers: {'X-CSRFToken': csrf}, body: fd,
+      });
+      const data = await r.json();
+      if (data.error) setStatus(target, 'danger', data.error);
+      else setRendered(target, 'Grader feedback', data.feedback, 'light border border-success');
+    } catch (e) { setStatus(target, 'danger', String(e)); }
+    finally { btn.disabled = false; }
+  });
+});
+
+document.querySelectorAll('.solve-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const target = document.getElementById(btn.dataset.target);
+    setStatus(target, 'info', 'Solving…');
+    btn.disabled = true;
+    const fd = new FormData();
+    fd.append('problem', btn.dataset.problem);
+    fd.append('topic', btn.dataset.topic);
+    try {
+      const r = await fetch("{% url 'ui:solve_problem' cid %}", {
+        method: 'POST', headers: {'X-CSRFToken': csrf}, body: fd,
+      });
+      const data = await r.json();
+      if (data.error) setStatus(target, 'danger', data.error);
+      else setRendered(target, 'Reference solution', data.answer, 'light border border-warning');
+    } catch (e) { setStatus(target, 'danger', String(e)); }
+    finally { btn.disabled = false; }
+  });
+});
+
+document.querySelectorAll('.done-mock').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const fd = new FormData();
+    fd.append('topic', btn.dataset.topic);
+    fd.append('key', btn.dataset.key);
+    fd.append('state', '1');
+    btn.disabled = true;
+    await fetch("{% url 'ui:progress_toggle' cid %}", {
+      method: 'POST', headers: {'X-CSRFToken': csrf}, body: fd,
+    });
+    btn.classList.remove('btn-outline-success');
+    btn.classList.add('btn-success');
+    btn.textContent = '✓ Solved';
+  });
+});
+</script>
+{% endblock %}

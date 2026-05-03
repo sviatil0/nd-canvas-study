@@ -385,6 +385,127 @@ def progress_toggle(request, cid: int):
                         content_type="application/json")
 
 
+def mock_exam(request, cid: int):
+    cdir = _course_dir_for(cid)
+    problems_file = cdir / "bundles" / "problems.json"
+    if not problems_file.exists():
+        raise Http404("run problems.py first")
+    data = json.loads(problems_file.read_text())
+
+    sys.path.insert(0, str(ROOT))
+    from topic_graph import GRAPH
+
+    selected_topics = request.GET.getlist("topic") or []
+    n = int(request.GET.get("n", 10))
+    minutes = int(request.GET.get("minutes", 30))
+
+    pool = []
+    for t, problems in data.items():
+        if selected_topics and t not in selected_topics:
+            continue
+        for p in problems:
+            ap = dict(p)
+            ap["topic"] = t
+            ap["topic_label"] = GRAPH.get(t, {}).get("label", t)
+            pool.append(ap)
+
+    import random
+    random.shuffle(pool)
+    sample = pool[: max(1, n)]
+
+    return render(request, "ui/mock.html", {
+        "cid": cid,
+        "minutes": minutes,
+        "problems": sample,
+        "available_topics": sorted(data.keys()),
+        "selected_topics": selected_topics,
+        "n": n,
+    })
+
+
+@require_POST
+def grade_answer(request, cid: int):
+    cdir = _course_dir_for(cid)
+    problem = request.POST.get("problem", "").strip()
+    attempt = request.POST.get("attempt", "").strip()
+    topic = request.POST.get("topic", "").strip() or None
+    if not problem or not attempt:
+        return HttpResponse(json.dumps({"error": "need problem + attempt"}), status=400, content_type="application/json")
+
+    sys.path.insert(0, str(ROOT))
+    from solver import _gather_context
+    context = _gather_context(cdir, topic, max_chars=20000)
+
+    instruction = (
+        "You are a statistics tutor. Grade the student's attempt against the problem. "
+        "Use this rubric:\n"
+        "1. Identify the student's final answer.\n"
+        "2. Compute the correct answer yourself.\n"
+        "3. Compare. State CORRECT or INCORRECT in bold.\n"
+        "4. If incorrect: pinpoint the FIRST step where they went wrong, quote that step, "
+        "explain the specific mistake, then show the correct path from that point.\n"
+        "5. If correct: confirm and note any inefficiencies.\n"
+        "Use Markdown + LaTeX ($...$ inline, $$...$$ block). Keep under 350 words."
+    )
+    prompt = (
+        f"--- COURSE REFERENCE ---\n{context}\n\n"
+        f"--- PROBLEM ---\n{problem}\n\n"
+        f"--- STUDENT ATTEMPT ---\n{attempt}\n\n"
+        f"--- TASK ---\n{instruction}"
+    )
+
+    import shutil, subprocess
+    if not shutil.which("claude"):
+        return HttpResponse(json.dumps({"error": "claude CLI missing"}), status=500, content_type="application/json")
+    try:
+        proc = subprocess.run(["claude", "-p", prompt], capture_output=True, text=True, timeout=180)
+    except subprocess.TimeoutExpired:
+        return HttpResponse(json.dumps({"error": "timeout"}), status=504, content_type="application/json")
+    if proc.returncode != 0:
+        return HttpResponse(json.dumps({"error": proc.stderr[:300]}), status=500, content_type="application/json")
+    return HttpResponse(json.dumps({"feedback": proc.stdout.strip()}), content_type="application/json")
+
+
+def likelihood(request, cid: int):
+    cdir = _course_dir_for(cid)
+    f = cdir / "bundles" / "likelihood.json"
+    rows = json.loads(f.read_text()) if f.exists() else []
+    return render(request, "ui/likelihood.html", {"cid": cid, "rows": rows})
+
+
+@require_POST
+def build_likelihood(request, cid: int):
+    cdir = _course_dir_for(cid)
+    code, out = _run([PYTHON, "likelihood.py", "--course-dir", str(cdir)])
+    if code == 0:
+        messages.success(request, "Likelihood ranking generated.")
+    else:
+        messages.error(request, f"Failed: {out}")
+    return redirect("ui:likelihood", cid=cid)
+
+
+def formulas(request, cid: int):
+    cdir = _course_dir_for(cid)
+    pdf = cdir / "modules/final-exam-materials/30440feformulas.pdf"
+    if not pdf.exists():
+        raise Http404("formula sheet not found")
+    sys.path.insert(0, str(ROOT))
+    from snippets import render_page
+    from pypdf import PdfReader
+    pages = PdfReader(str(pdf)).pages
+    images = []
+    for i in range(len(pages)):
+        try:
+            png = render_page(pdf, i + 1, cdir)
+            images.append(reverse("ui:snippet", args=[cid, str(pdf.relative_to(cdir)), i + 1]))
+        except Exception:
+            pass
+    return render(request, "ui/formulas.html", {
+        "cid": cid,
+        "images": images,
+    })
+
+
 def graph_png(request, cid: int):
     cdir = _course_dir_for(cid)
     png = cdir / "bundles" / "topic_graph.png"

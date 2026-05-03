@@ -28,4 +28,9 @@ urlpatterns = [
     path("course/<int:cid>/topic/<str:topic>/followup/", views.followup, name="followup"),
     path("course/<int:cid>/progress/", views.progress_get, name="progress_get"),
     path("course/<int:cid>/progress/toggle/", views.progress_toggle, name="progress_toggle"),
+    path("course/<int:cid>/mock/", views.mock_exam, name="mock_exam"),
+    path("course/<int:cid>/grade/", views.grade_answer, name="grade_answer"),
+    path("course/<int:cid>/formulas/", views.formulas, name="formulas"),
+    path("course/<int:cid>/likelihood/", views.likelihood, name="likelihood"),
+    path("course/<int:cid>/likelihood/build/", views.build_likelihood, name="build_likelihood"),
 ]

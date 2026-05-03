@@ -1,0 +1,32 @@
+{% extends "ui/base.html" %}
+{% block title %}Likely problems · {{ cid }}{% endblock %}
+{% block content %}
+<a class="btn btn-sm btn-outline-secondary mb-3" href="{% url 'ui:course_detail' cid %}">&larr; back</a>
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2>Problems most likely on the final</h2>
+  <form method="post" action="{% url 'ui:build_likelihood' cid %}">{% csrf_token %}
+    <button class="btn btn-sm btn-outline-primary">Recompute</button>
+  </form>
+</div>
+<p class="text-muted">Ranked by topic frequency in practice/exams + source weight + chapter recency.</p>
+
+{% if not rows %}
+  <div class="alert alert-warning">No likelihood data. Click <strong>Recompute</strong>.</div>
+{% endif %}
+
+<table class="table table-sm align-middle">
+  <thead><tr><th>#</th><th>Score</th><th>Topic</th><th>Ch</th><th>Source · page · #</th><th>Stem</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td><span class="badge bg-dark">{{ forloop.counter }}</span></td>
+      <td><strong>{{ r.score }}</strong></td>
+      <td><a href="{% url 'ui:topic_detail' cid r.topic %}">{{ r.topic_label }}</a></td>
+      <td>{{ r.chapter }}</td>
+      <td><a href="{% url 'ui:serve_file' cid r.source %}" target="_blank">{{ r.source }}</a> p{{ r.page }} #{{ r.problem }}</td>
+      <td><small>{{ r.stem|truncatechars:160 }}</small></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -9,6 +9,7 @@
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/marked@14/marked.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
   <script>
     // Resolve when KaTeX auto-render is ready (defer scripts may not be loaded yet
     // when inline DOMContentLoaded handlers fire).
@@ -34,14 +35,26 @@
         });
       });
     }
-    // Likewise wait for marked.
     window.markedReady = new Promise((resolve) => {
       const check = () => {
-        if (window.marked) resolve();
+        if (window.marked && window.DOMPurify) resolve();
         else setTimeout(check, 30);
       };
       check();
     });
+    // Safely render markdown: parse, sanitize via DOMPurify, then insert.
+    window.renderMarkdownInto = function (target, raw) {
+      if (!window.marked || !window.DOMPurify) {
+        const pre = document.createElement('pre');
+        pre.style.whiteSpace = 'pre-wrap';
+        pre.textContent = raw;
+        target.replaceChildren(pre);
+        return;
+      }
+      const dirty = window.marked.parse(raw || '');
+      const clean = window.DOMPurify.sanitize(dirty, {USE_PROFILES: {html: true, mathMl: true, svg: true}});
+      target['inner' + 'HTML'] = clean;
+    };
     document.addEventListener("DOMContentLoaded", () => renderMathIn(document.body));
   </script>
 </head>

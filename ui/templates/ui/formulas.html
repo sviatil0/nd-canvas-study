@@ -1,0 +1,10 @@
+{% extends "ui/base.html" %}
+{% block title %}Formula sheet{% endblock %}
+{% block content %}
+<div class="text-center mb-2">
+  <small class="text-muted">{{ images|length }} pages</small>
+</div>
+{% for src in images %}
+  <img src="{{ src }}" class="img-fluid border mb-3" loading="lazy">
+{% endfor %}
+{% endblock %}
