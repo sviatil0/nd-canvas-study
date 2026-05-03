@@ -24,40 +24,67 @@ CLAUDE = shutil.which("claude") or "claude"
 TIMEOUT = 180
 
 PROMPT_TEMPLATE = """You are an expert statistics tutor for ACMS 30440 at Notre Dame.
-Write a concise, exam-focused concept summary for the topic: **{label}** (Chapter {ch}).
+Write a THOROUGH study guide for the topic: **{label}** (Chapter {ch}).
 
-Structure your answer EXACTLY as:
+This is the student's primary learning resource — be detailed, not brief.
+Aim for 1500–3000 words. Use the course reference material below extensively.
+
+Structure your answer EXACTLY with these sections in order:
 
 ## Definition
-1-3 sentences. What it is.
+2–4 sentences. What it is, what it solves, why it matters.
+
+## Intuition
+A paragraph or two building intuition. Use analogies. Why does this work?
+What's the underlying mechanism? Don't just state — explain.
 
 ## When to use it
-Bullet list of scenarios on the exam where this applies.
+Bullet list of scenarios on the exam where this applies. Include the
+identifying clues in problem wording that should trigger this method.
+At least 5–8 bullets.
 
 ## Key formulas
-LaTeX block(s) using $$...$$. List each formula with one line of context.
+For EACH formula:
+- Display in LaTeX `$$...$$`
+- One sentence on what each variable means
+- One sentence on when to use this specific formula vs alternatives
+
+Cover ALL the formulas a student needs for this topic, not just the main one.
+
+## Step-by-step procedure
+A numbered 5–10 step recipe for solving a typical problem of this type.
+Include decision points (e.g., "if n < 30, use t-table; otherwise z-table").
 
 ## Common pitfalls
-3-6 bullets of mistakes students make on this topic.
+6–10 bullets of mistakes students make on this topic, each with the fix.
+
+## Worked examples
+At least TWO fully-worked examples with all calculations shown step-by-step
+in LaTeX. Vary difficulty (one straightforward, one trickier with subparts).
+
+## Connection to other topics
+How does this relate to the prereqs and the topics it builds toward?
+What's the bigger picture?
 
 ## Prerequisites
-List the topics from this course required to understand this one. Format each as
-`- [topic_key](TOPIC_LINK_PLACEHOLDER:topic_key) — short reason`.
+List the prereqs needed. Format each as
+`- [topic_key](TOPIC_LINK_PLACEHOLDER:topic_key) — short reason it's needed`.
 Available prereq keys: {prereq_keys}
 
-## Worked example
-One short worked example using the formulas above (use LaTeX).
+## Quick recall sheet
+A compact bullet reference of just the formulas + when-to-use, suitable for
+last-minute review. ~10 lines max.
 
-Do NOT add any other sections. Use Markdown with $...$ inline math and $$...$$ block math.
-Keep total under 600 words.
+Use Markdown with $...$ inline math and $$...$$ block math throughout.
+Keep tables as Markdown tables.
 
---- COURSE REFERENCE (use as needed; do not echo verbatim) ---
+--- COURSE REFERENCE (use as needed; mine it for specific examples and notation) ---
 {context}
 --- END REFERENCE ---
 """
 
 
-def gather_context(course_dir: Path, topic: str, max_chars: int = 30000) -> str:
+def gather_context(course_dir: Path, topic: str, max_chars: int = 80000) -> str:
     parts: list[str] = []
     formulas = course_dir / "modules/final-exam-materials/30440feformulas.pdf"
     if formulas.exists():
@@ -75,7 +102,7 @@ def gather_context(course_dir: Path, topic: str, max_chars: int = 30000) -> str:
         try:
             res = coll.query(
                 query_texts=[f"{topic} {label}"],
-                n_results=8,
+                n_results=20,
                 where={"category": "in_class"},
             )
             for doc, meta in zip(res["documents"][0], res["metadatas"][0]):
@@ -101,7 +128,7 @@ def summarize_one(course_dir: Path, topic: str) -> str:
     if backend == "gemini":
         try:
             from gemini_client import generate
-            return generate(prompt, max_output_tokens=2048)
+            return generate(prompt, max_output_tokens=16384)
         except Exception as e:
             return f"# {info['label']}\n\nGemini generation failed: {e}"
     proc = subprocess.run(
