@@ -10,6 +10,7 @@
       <button class="btn btn-sm btn-outline-primary">{% if have_info %}Regenerate{% else %}Generate{% endif %}</button>
     </form>
     <button class="btn btn-sm btn-outline-info" id="cal-preview-btn">Preview events</button>
+    <button class="btn btn-sm btn-outline-warning" id="cal-dedup-btn">Check duplicates</button>
     <form id="cal-push-form" class="d-flex gap-2 align-items-center">{% csrf_token %}
       <input class="form-control form-control-sm" name="calendar_id"
              style="width:220px;" value="soleksii@nd.edu" placeholder="your calendar email">
@@ -40,6 +41,15 @@
       <div id="cal-status-bar" class="progress-bar bg-success" style="width:0%;"></div>
     </div>
     <pre id="cal-status-tail" style="background:#1e1e1e; color:#dcdcdc; padding:6px; border-radius:4px; max-height:160px; overflow:auto; font-size:11px; margin:0;"></pre>
+  </div>
+</div>
+
+<div id="cal-dedup" class="card mb-3 d-none">
+  <div class="card-body">
+    <h6 class="card-title">Possible duplicate events on your calendar</h6>
+    <div id="cal-dedup-list" class="small font-monospace"></div>
+    <small class="text-muted">Items already created by this tool show "[ours]". The pusher
+      uses idempotent tags — re-running won't re-create those.</small>
   </div>
 </div>
 
@@ -173,6 +183,34 @@ pushForm.addEventListener('submit', async (e) => {
     const finished = await pollCalStatus();
     if (finished) clearInterval(id);
   }, 1500);
+});
+
+document.getElementById('cal-dedup-btn').addEventListener('click', async () => {
+  const card = document.getElementById('cal-dedup');
+  const list = document.getElementById('cal-dedup-list');
+  card.classList.remove('d-none');
+  list.replaceChildren();
+  list.textContent = 'Checking…';
+  try {
+    const calId = document.querySelector('input[name=calendar_id]').value || 'primary';
+    const r = await fetch("{% url 'ui:calendar_dedup' cid %}?calendar_id=" + encodeURIComponent(calId));
+    const d = await r.json();
+    list.replaceChildren();
+    if (d.error) { list.textContent = 'Error: ' + d.error; return; }
+    if (!d.matches.length) { list.textContent = '✓ No same-date events found.'; return; }
+    d.matches.forEach(m => {
+      const head = document.createElement('div');
+      head.className = 'fw-bold mt-2';
+      head.textContent = m.emoji + '  ' + m.date + '  →  [' + m.kind + '] ' + m.title;
+      list.appendChild(head);
+      m.existing.forEach(ex => {
+        const row = document.createElement('div');
+        row.className = 'ps-3 ' + (ex.ours ? 'text-success' : 'text-warning');
+        row.textContent = (ex.ours ? '[ours, will update] ' : '[exists on calendar] ') + ex.summary;
+        list.appendChild(row);
+      });
+    });
+  } catch (e) { list.textContent = 'Failed: ' + e; }
 });
 
 document.getElementById('cal-preview-btn').addEventListener('click', async () => {

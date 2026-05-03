@@ -29,6 +29,8 @@ from pdf2image import convert_from_path
 ALL_PROBLEM_CATEGORIES = {
     "exams", "exam_solutions", "practice",
     "homeworks", "hw_keys", "in_class",
+    "lectures", "other",  # include catch-all so attached prior-sem exams
+                          # + chapter scans get OCR'd too
 }
 PAGE_SEP = "\n\n--- page {n} ---\n\n"
 DPI = 200

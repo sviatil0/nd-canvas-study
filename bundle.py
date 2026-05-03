@@ -22,7 +22,7 @@ CATEGORY_PATTERNS = [
     ("homeworks",      re.compile(r"hw[\w-]*|homework", re.I)),
     ("exam_solutions", re.compile(r"exam[\w -]*(solution|key)|e\d+[\w -]*solution", re.I)),
     ("practice",       re.compile(r"practice|extra.*problem|review", re.I)),
-    ("exams",          re.compile(r"\bexam\b|e\d+_|final", re.I)),
+    ("exams",          re.compile(r"\bexam\b|e\d+_|e\d+-|final", re.I)),
     ("in_class",       re.compile(r"inclass|in[-_ ]class", re.I)),
     ("tables",         re.compile(r"z-?table|t-?table|f-?table|chisq|studentized", re.I)),
     ("lectures",       re.compile(r"lecture|chapter|ch\d+|notes|slides", re.I)),

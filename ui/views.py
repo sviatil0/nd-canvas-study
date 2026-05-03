@@ -810,6 +810,72 @@ def build_class_info(request, cid: int):
     return redirect("ui:class_info", cid=cid)
 
 
+def calendar_dedup(request, cid: int):
+    """Check existing Calendar events on the same dates; return list for confirm."""
+    cdir = _course_dir_for(cid)
+    cal_id = request.GET.get("calendar_id", "primary").strip() or "primary"
+    sys.path.insert(0, str(ROOT))
+    from calendar_sync import (extract_events_from_class_info,
+                               extract_events_from_assignments,
+                               get_calendar_service, categorize_event)
+    info_md = (cdir / "bundles" / "CLASS_INFO.md").read_text() if (cdir / "bundles" / "CLASS_INFO.md").exists() else ""
+    events = extract_events_from_class_info(info_md) + extract_events_from_assignments(cdir)
+    seen = set()
+    uniq = []
+    for e in events:
+        key = (e["date"], e["title"][:60])
+        if key in seen: continue
+        seen.add(key); uniq.append(e)
+
+    try:
+        service = get_calendar_service()
+    except Exception as exc:
+        return HttpResponse(json.dumps({"error": str(exc)}), status=500,
+                            content_type="application/json")
+
+    # Group dates
+    dates = sorted({e["date"] for e in uniq})
+    if not dates:
+        return HttpResponse(json.dumps({"matches": []}),
+                            content_type="application/json")
+    from datetime import datetime as _dt
+    time_min = _dt.fromisoformat(min(dates) + "T00:00:00").isoformat() + "-05:00"
+    time_max = _dt.fromisoformat(max(dates) + "T23:59:59").isoformat() + "-05:00"
+    try:
+        existing = service.events().list(
+            calendarId=cal_id, timeMin=time_min, timeMax=time_max,
+            singleEvents=True, maxResults=2500,
+        ).execute().get("items", [])
+    except Exception as exc:
+        return HttpResponse(json.dumps({"error": str(exc)}), status=500,
+                            content_type="application/json")
+
+    # For each new event, find existing events same date with similar title
+    matches = []
+    label = cdir.name.split("_", 1)[1] if "_" in cdir.name else cdir.name
+    for e in uniq:
+        emoji, kind, _color = categorize_event(e)
+        same_date = []
+        for ex in existing:
+            ex_start = ex.get("start", {})
+            ex_date = ex_start.get("date") or (ex_start.get("dateTime") or "")[:10]
+            if ex_date != e["date"]:
+                continue
+            ex_summary = ex.get("summary") or ""
+            already_ours = (ex.get("extendedProperties") or {}).get("private", {}).get("ndcanvas_tag")
+            same_date.append({
+                "id": ex.get("id"), "summary": ex_summary,
+                "ours": bool(already_ours),
+            })
+        if same_date:
+            matches.append({
+                "date": e["date"], "title": e["title"], "emoji": emoji, "kind": kind,
+                "existing": same_date,
+            })
+    return HttpResponse(json.dumps({"matches": matches, "count": len(matches)}),
+                        content_type="application/json")
+
+
 def calendar_status(request, cid: int):
     log_path = Path(f"/tmp/calendar_sync_{cid}.log")
     if not log_path.exists():

@@ -249,10 +249,23 @@ def upsert_event(service, calendar_id: str, event: dict, course_label: str,
             "useDefault": False,
             "overrides": [{"method": "popup", "minutes": 4 * 60}],
         }
+    # Use override time if user supplied
+    override = event.get("override_time")  # "HH:MM" 24h
+    if override:
+        try:
+            h, m = override.split(":")
+            dt_iso = f"{event['date']}T{int(h):02}:{int(m):02}:00"
+            event["datetime_iso"] = dt_iso
+        except Exception:
+            pass
     if event.get("datetime_iso"):
-        end = datetime.fromisoformat(event["datetime_iso"]) + timedelta(hours=1)
-        body["start"] = {"dateTime": event["datetime_iso"]}
-        body["end"] = {"dateTime": end.isoformat()}
+        try:
+            dt = datetime.fromisoformat(event["datetime_iso"])
+        except ValueError:
+            dt = datetime.fromisoformat(event["datetime_iso"].replace("Z", "+00:00"))
+        end = dt + timedelta(hours=1)
+        body["start"] = {"dateTime": dt.isoformat(), "timeZone": "America/New_York"}
+        body["end"] = {"dateTime": end.isoformat(), "timeZone": "America/New_York"}
     else:
         body["start"] = {"date": event["date"]}
         body["end"] = {"date": event["date"]}
@@ -283,6 +296,10 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--ics", action="store_true",
                     help="Skip API call, just write .ics file")
+    ap.add_argument("--time-overrides", default="",
+                    help="JSON: {date+title_prefix: 'HH:MM', ...}")
+    ap.add_argument("--skip-events", default="",
+                    help="JSON list of (date, title_prefix) tuples to skip")
     args = ap.parse_args()
 
     cdir = Path(args.course_dir)
@@ -304,9 +321,41 @@ def main() -> int:
         seen.add(key)
         uniq.append(e)
 
+    # Apply skip list
+    skip_list = []
+    if args.skip_events:
+        try:
+            skip_list = json.loads(args.skip_events)
+        except Exception:
+            pass
+    skip_set = {(d, p) for d, p in skip_list}
+    if skip_set:
+        before = len(uniq)
+        uniq = [e for e in uniq
+                if not any(e["date"] == d and e["title"].startswith(p) for d, p in skip_set)]
+        print(f"Skipped {before - len(uniq)} events per --skip-events")
+
+    # Apply time overrides
+    if args.time_overrides:
+        try:
+            overrides = json.loads(args.time_overrides)
+        except Exception:
+            overrides = {}
+        for e in uniq:
+            for prefix, time_str in overrides.items():
+                if (e["date"] + "|") in (e["date"] + "|" + prefix) and e["title"].startswith(prefix.split("|", 1)[1] if "|" in prefix else ""):
+                    e["override_time"] = time_str
+            # Simpler: key is "date|title_prefix"
+            for key, time_str in overrides.items():
+                if "|" in key:
+                    d, p = key.split("|", 1)
+                    if e["date"] == d and e["title"].startswith(p):
+                        e["override_time"] = time_str
+
     print(f"Found {len(uniq)} unique events for {label}:")
     for e in uniq:
-        print(f"  {e['date']:12}  {e['title'][:80]:80}  ({e['src']})")
+        ot = f" @{e['override_time']}" if e.get("override_time") else ""
+        print(f"  {e['date']:12}{ot}  {e['title'][:80]:80}  ({e['src']})")
 
     if args.dry_run:
         print("\n--dry-run set, not touching Calendar.")
