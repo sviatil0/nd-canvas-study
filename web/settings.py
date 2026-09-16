@@ -20,7 +20,20 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-np+@15oc8-v%&5f_cwfs%3^ly+ix**u4*fo549vbt)sgwpd-d7'
+# Loaded from DJANGO_SECRET_KEY, else from secrets/ (gitignored), else
+# generated once and persisted there. Never hardcode: this repo is public.
+import os
+
+_SECRET_KEY_FILE = BASE_DIR / "secrets" / "django_secret_key.txt"
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "")
+if not SECRET_KEY:
+    if _SECRET_KEY_FILE.exists():
+        SECRET_KEY = _SECRET_KEY_FILE.read_text().strip()
+    if not SECRET_KEY:
+        from django.core.management.utils import get_random_secret_key
+        SECRET_KEY = get_random_secret_key()
+        _SECRET_KEY_FILE.parent.mkdir(exist_ok=True)
+        _SECRET_KEY_FILE.write_text(SECRET_KEY)
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
