@@ -32,8 +32,10 @@ if not SECRET_KEY:
     if not SECRET_KEY:
         from django.core.management.utils import get_random_secret_key
         SECRET_KEY = get_random_secret_key()
-        _SECRET_KEY_FILE.parent.mkdir(exist_ok=True)
-        _SECRET_KEY_FILE.write_text(SECRET_KEY)
+        _SECRET_KEY_FILE.parent.mkdir(mode=0o700, exist_ok=True)
+        _fd = os.open(_SECRET_KEY_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(_fd, "w") as _f:
+            _f.write(SECRET_KEY)
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
