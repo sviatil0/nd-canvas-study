@@ -16,6 +16,10 @@ cd "$(dirname "$0")"
 
 PORT="${PORT:-8000}"
 UI_PIDFILE=".ui.pid"
+# Call the venv interpreter directly. Relying on `activate` to put `python` on
+# PATH broke once already: the activate script carried the absolute path of the
+# directory the venv was first created in, which no longer exists.
+PY_BIN=".venv/bin/python"
 
 ensure_venv() {
   if [ ! -d .venv ]; then
@@ -50,7 +54,7 @@ cmd_ui() {
   : "${GEMINI_MODEL:=gemini-2.5-pro}"
   export USE_BACKEND GCP_PROJECT GCP_LOCATIONS GEMINI_MODEL
   echo "Starting Django UI on http://127.0.0.1:$PORT (backend=$USE_BACKEND model=$GEMINI_MODEL)"
-  nohup python manage.py runserver "$PORT" >/tmp/ndcanvas-ui.log 2>&1 &
+  nohup "$PY_BIN" manage.py runserver "$PORT" >/tmp/ndcanvas-ui.log 2>&1 &
   echo $! > "$UI_PIDFILE"
   sleep 2
   echo "PID $(cat "$UI_PIDFILE")  log: /tmp/ndcanvas-ui.log"
@@ -88,21 +92,21 @@ cmd_prep() {
   activate
   if [ $# -lt 1 ]; then
     echo "Usage: $0 prep <class-name> [--skip-sync] [--ask 'Q'] [--with-summaries] [--with-panopto]"
-    python prep.py --list
+    "$PY_BIN" prep.py --list
     return 1
   fi
-  python prep.py "$@"
+  "$PY_BIN" prep.py "$@"
 }
 
 cmd_auth() {
   activate
-  python auth.py
+  "$PY_BIN" auth.py
 }
 
 cmd_panopto() {
   activate
   COURSE_DIR="${1:-downloads/128781_statistics}"
-  python panopto_browser.py --course-dir "$COURSE_DIR" "${@:2}"
+  "$PY_BIN" panopto_browser.py --course-dir "$COURSE_DIR" "${@:2}"
 }
 
 case "${1:-ui}" in

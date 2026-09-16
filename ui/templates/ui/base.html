@@ -80,7 +80,9 @@
         const ann = k.querySelector('annotation[encoding="application/x-tex"]');
         if (!ann) return;
         const src = ann.textContent.trim();
-        if (!src || src.length < 2) return;
+        if (!src || src.length < 4) return;
+        // Skip data-only LaTeX (numbers, \quad, whitespace) — not real formulas
+        if (/^[\d.\s\\quad\-,]+$/.test(src)) return;
         const isBlock = k.classList.contains('katex-display') ||
                         k.parentElement?.classList.contains('katex-display');
         const wrapped = isBlock ? '$$' + src + '$$' : '$' + src + '$';
@@ -137,6 +139,59 @@
       target['inner' + 'HTML'] = clean;
     };
     document.addEventListener("DOMContentLoaded", () => renderMathIn(document.body));
+
+    // ---- Audio resume-from-last-position cache ----
+    // Saves currentTime + playbackRate per audio src to localStorage so
+    // closing/refreshing the page (or reopening on phone) resumes playback.
+    function _audioKey(src) { return 'audio:' + src; }
+    function _attachAudioCache(audio) {
+      const src = (audio.currentSrc || audio.src
+                   || audio.querySelector('source')?.src || '').replace(location.origin, '');
+      if (!src || audio.dataset.cacheAttached) return;
+      audio.dataset.cacheAttached = '1';
+      const key = _audioKey(src);
+      // Restore saved position
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        try {
+          const data = JSON.parse(saved);
+          const seek = () => {
+            if (data.t && data.t < audio.duration - 2) {
+              audio.currentTime = data.t;
+            }
+            if (data.r) audio.playbackRate = data.r;
+          };
+          if (audio.readyState >= 1) seek();
+          else audio.addEventListener('loadedmetadata', seek, { once: true });
+        } catch (e) {}
+      }
+      // Persist on time updates (throttled to 5s) + on pause/end
+      let lastSave = 0;
+      function persist() {
+        try {
+          localStorage.setItem(key, JSON.stringify({
+            t: audio.currentTime,
+            r: audio.playbackRate,
+            d: audio.duration,
+            ts: Date.now(),
+          }));
+        } catch (e) {}
+      }
+      audio.addEventListener('timeupdate', () => {
+        const now = Date.now();
+        if (now - lastSave > 5000) { lastSave = now; persist(); }
+      });
+      audio.addEventListener('pause', persist);
+      audio.addEventListener('ended', () => { localStorage.removeItem(key); });
+      audio.addEventListener('ratechange', persist);
+    }
+    function _scanAudios() {
+      document.querySelectorAll('audio').forEach(_attachAudioCache);
+    }
+    // Initial scan + observe future inserts
+    document.addEventListener('DOMContentLoaded', _scanAudios);
+    new MutationObserver(_scanAudios).observe(document.documentElement,
+      { childList: true, subtree: true });
   </script>
 </head>
 <body class="bg-light">
@@ -147,9 +202,21 @@
       <span class="fs-4 fw-bold">ND Canvas Study</span>
     </a>
     <span class="ms-auto"></span>
+    {% if current_cid %}
+    <a class="btn btn-sm btn-outline-success me-1" href="{% url 'ui:all_audio' current_cid %}" title="Topic podcasts (offline-friendly)">🎧 Audio</a>
+    <a class="btn btn-sm btn-outline-light me-1" href="{% url 'ui:cheatsheet_pdf' current_cid %}" target="_blank" title="Printable cheatsheet (Cmd+P)">📝 Cheatsheet</a>
+    <a class="btn btn-sm btn-outline-info me-1" href="{% url 'ui:chat' current_cid %}" title="Ask the tutor anything (RAG)">💬 Chat</a>
+    <a class="btn btn-sm btn-outline-warning me-1" href="{% url 'ui:saved_problems' current_cid %}" title="Saved problems">⭐ Saved</a>
+    <a class="btn btn-sm btn-outline-danger me-1" href="{% url 'ui:mistakes' current_cid %}" title="Wrong answers from Gradescope">❌ Mistakes</a>
+    <a class="btn btn-sm btn-outline-secondary me-1" href="{% url 'ui:regrade_queue' current_cid %}" title="Regrade queue">🚩 Regrade</a>
+    {% endif %}
     <span id="auth-state" class="badge bg-secondary">checking…</span>
+    <span id="google-state" class="badge bg-secondary" title="Google Drive session">G:?</span>
     <form method="post" action="{% url 'ui:auth' %}" class="d-inline">{% csrf_token %}
       <button class="btn btn-sm btn-outline-warning" type="submit" id="reauth-btn">Re-auth Canvas</button>
+    </form>
+    <form method="post" action="{% url 'ui:google_auth_run' %}" class="d-inline">{% csrf_token %}
+      <button class="btn btn-sm btn-outline-warning" type="submit" id="google-auth-btn" title="Open browser to log into Google (for Drive/Docs/Slides)">🔐 Google</button>
     </form>
     <a class="btn btn-sm btn-outline-light" href="{% url 'ui:auth_check' %}" target="_blank">check</a>
   </div>
@@ -173,6 +240,26 @@ async function checkAuth() {
 }
 checkAuth();
 setInterval(checkAuth, 15000);
+
+async function checkGoogle() {
+  try {
+    const r = await fetch("{% url 'ui:google_auth_status' %}");
+    const d = await r.json();
+    const el = document.getElementById('google-state');
+    if (d.valid) {
+      el.textContent = '● G ok';
+      el.className = 'badge bg-success';
+    } else {
+      el.textContent = '✗ G login';
+      el.className = 'badge bg-warning text-dark';
+      el.title = d.reason || '';
+    }
+  } catch (e) {
+    document.getElementById('google-state').textContent = '? G err';
+  }
+}
+checkGoogle();
+setInterval(checkGoogle, 30000);
 </script>
 <main class="container-fluid px-3" style="max-width:1280px;">
   {% if messages %}

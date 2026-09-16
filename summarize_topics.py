@@ -18,12 +18,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from topic_graph import GRAPH, prereqs_of
+from topic_graph import GRAPH, prereqs_of, for_course as graph_for_course
 
 CLAUDE = shutil.which("claude") or "claude"
 TIMEOUT = 180
 
-PROMPT_TEMPLATE = """You are an expert statistics tutor for ACMS 30440 at Notre Dame.
+PROMPT_TEMPLATE = """You are an expert tutor for the course "{course}" at Notre Dame.
 Write a THOROUGH study guide for the topic: **{label}** (Chapter {ch}).
 
 This is the student's primary learning resource — be detailed, not brief.
@@ -100,11 +100,44 @@ def gather_context(course_dir: Path, topic: str, max_chars: int = 120000) -> str
         except Exception:
             pass
 
-    # 2. Full OCR text of every PDF in the topic's chapter
     info = GRAPH.get(topic, {})
     ch = info.get("ch")
+    ocr_dir = course_dir / "_ocr"
+
+    def add_pdf(pdf: Path) -> None:
+        """Append a PDF's best available text: Gemini/Tesseract OCR cache, else pypdf."""
+        rel = str(pdf.relative_to(course_dir))
+        if rel in seen_paths:
+            return
+        seen_paths.add(rel)
+        cache = ocr_dir / (rel.replace("/", "__") + ".txt")
+        if cache.exists():
+            parts.append(f"=== {rel} (OCR) ===\n{cache.read_text()}")
+            return
+        try:
+            from pypdf import PdfReader
+            txt = "\n".join((pg.extract_text() or "") for pg in PdfReader(str(pdf)).pages)
+        except Exception:
+            return
+        if txt.strip():
+            parts.append(f"=== {rel} ===\n{txt}")
+
+    # 2. This week's lecture slides, when the course posts them as W<week>D<day> decks.
+    # Course-authored slides outrank the textbook, so they go in before the readings and
+    # never get cut by the max_chars truncation below.
     if ch:
-        ocr_dir = course_dir / "_ocr"
+        for pdf in sorted(course_dir.glob(
+                f"_external/google_drive_remote/presentation/W{ch}D*.pdf")):
+            add_pdf(pdf)
+
+    # 2b. Readings declared on the topic graph. Courses whose Canvas shell is empty keep
+    # their textbook chapters here instead of under modules/chapter-<n>/.
+    for pattern in info.get("readings", []):
+        for pdf in sorted(course_dir.glob(pattern)):
+            add_pdf(pdf)
+
+    # 2c. Full OCR text of every PDF in the topic's chapter
+    if ch:
         modules_root = course_dir / "modules"
         if modules_root.exists():
             chapter_dirs = [
@@ -117,13 +150,7 @@ def gather_context(course_dir: Path, topic: str, max_chars: int = 120000) -> str
                 for pdf in sorted(cdir.rglob("*.pdf")):
                     if any(part in {"_ocr", "_pages", "_shards"} for part in pdf.parts):
                         continue
-                    rel = str(pdf.relative_to(course_dir))
-                    if rel in seen_paths:
-                        continue
-                    seen_paths.add(rel)
-                    cache = ocr_dir / (rel.replace("/", "__") + ".txt")
-                    if cache.exists():
-                        parts.append(f"=== {rel} (OCR) ===\n{cache.read_text()}")
+                    add_pdf(pdf)
 
     # 3. Vector-retrieved chunks from in-class notes (skip if Chroma broken)
     chroma_dir = course_dir / "chroma"
@@ -138,6 +165,10 @@ def gather_context(course_dir: Path, topic: str, max_chars: int = 120000) -> str
                 n_results=20,
                 where={"category": "in_class"},
             )
+            # Courses with no in-class notes (empty Canvas shell) would otherwise get an
+            # empty context here, so fall back to the whole index.
+            if not res["documents"][0]:
+                res = coll.query(query_texts=[f"{topic} {label}"], n_results=30)
             for doc, meta in zip(res["documents"][0], res["metadatas"][0]):
                 tag = f"{meta['source']}#p{meta['page']}"
                 if tag in seen_paths:
@@ -152,6 +183,19 @@ def gather_context(course_dir: Path, topic: str, max_chars: int = 120000) -> str
     return full[:max_chars]
 
 
+def course_name(course_dir: Path) -> str:
+    import json as _json
+    cj = course_dir / "course.json"
+    if cj.exists():
+        try:
+            name = _json.loads(cj.read_text()).get("name")
+            if name:
+                return name
+        except Exception:
+            pass
+    return course_dir.name
+
+
 def summarize_one(course_dir: Path, topic: str) -> str:
     import os
     info = GRAPH.get(topic)
@@ -159,6 +203,7 @@ def summarize_one(course_dir: Path, topic: str) -> str:
         return f"# {topic}\n\nUnknown topic."
     context = gather_context(course_dir, topic)
     prompt = PROMPT_TEMPLATE.format(
+        course=course_name(course_dir),
         label=info["label"],
         ch=info["ch"],
         prereq_keys=", ".join(prereqs_of(topic)) or "(none)",
@@ -233,6 +278,10 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=4)
     args = ap.parse_args()
     cdir = Path(args.course_dir)
+
+    global GRAPH
+    from analyze import detect_course_id
+    GRAPH = graph_for_course(detect_course_id(cdir) or 0) or GRAPH
     if not cdir.is_dir():
         print(f"Not a directory: {cdir}")
         return 1

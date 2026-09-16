@@ -41,8 +41,11 @@ def _cache_put(key: str, value: str) -> None:
     (CACHE_DIR / f"{key}.txt").write_text(value)
 
 _init_lock = threading.Lock()
-_models: dict[str, object] = {}  # location -> GenerativeModel
+# Models cached as (location, model_name) -> GenerativeModel so different
+# model_names (pro vs flash) coexist with same regional limiters.
+_models: dict[tuple[str, str], object] = {}
 _limiters: dict[str, "RateLimiter"] = {}
+_locations_cache: list[str] = []
 _rotation_idx = 0
 _rotation_lock = threading.Lock()
 
@@ -63,35 +66,39 @@ class RateLimiter:
             self.next_allowed = max(self.next_allowed, now) + self.min_interval
 
 
-def _ensure_initialized() -> list[str]:
-    global _models, _limiters
-    if _models:
-        return list(_models.keys())
+def _ensure_initialized(model_name: str) -> list[str]:
+    """Init regional models for given model_name. Reuses limiters across models."""
+    global _models, _limiters, _locations_cache
+    if _locations_cache and any(k[1] == model_name for k in _models):
+        return _locations_cache
     with _init_lock:
-        if _models:
-            return list(_models.keys())
+        if _locations_cache and any(k[1] == model_name for k in _models):
+            return _locations_cache
         project = os.environ.get("GCP_PROJECT")
         if not project:
             raise RuntimeError("Set GCP_PROJECT env var (your GCP project id).")
-        locations = [
-            l.strip()
-            for l in os.environ.get("GCP_LOCATIONS", DEFAULT_LOCATIONS).split(",")
-            if l.strip()
-        ]
-        rpm = int(os.environ.get("GCP_RPM_PER_REGION", DEFAULT_RPM_PER_REGION))
+        if not _locations_cache:
+            _locations_cache = [
+                l.strip()
+                for l in os.environ.get("GCP_LOCATIONS", DEFAULT_LOCATIONS).split(",")
+                if l.strip()
+            ]
+            rpm = int(os.environ.get("GCP_RPM_PER_REGION", DEFAULT_RPM_PER_REGION))
+            for loc in _locations_cache:
+                _limiters[loc] = RateLimiter(rpm)
         import vertexai
         from vertexai.generative_models import GenerativeModel
-        model_name = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
-        for loc in locations:
+        for loc in _locations_cache:
+            if (loc, model_name) in _models:
+                continue
             vertexai.init(project=project, location=loc)
-            _models[loc] = GenerativeModel(model_name)
-            _limiters[loc] = RateLimiter(rpm)
-        return locations
+            _models[(loc, model_name)] = GenerativeModel(model_name)
+        return _locations_cache
 
 
-def _next_region() -> str:
+def _next_region(model_name: str) -> str:
     global _rotation_idx
-    locs = _ensure_initialized()
+    locs = _ensure_initialized(model_name)
     with _rotation_lock:
         loc = locs[_rotation_idx % len(locs)]
         _rotation_idx += 1
@@ -100,10 +107,11 @@ def _next_region() -> str:
 
 def generate(prompt: str, system: str | None = None,
              max_output_tokens: int = 8192, temperature: float = 0.3,
-             retries: int = 3, use_cache: bool = True) -> str:
+             retries: int = 3, use_cache: bool = True,
+             model: str | None = None) -> str:
     """Single-text-prompt → string. Round-robins across configured regions."""
     from vertexai.generative_models import GenerationConfig
-    model_name = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
+    model_name = model or os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
     cache_payload = {"m": model_name, "p": prompt, "s": system or "",
                      "max": max_output_tokens, "t": temperature, "kind": "text"}
     key = _cache_key(cache_payload)
@@ -114,13 +122,13 @@ def generate(prompt: str, system: str | None = None,
 
     last_err = ""
     for attempt in range(retries):
-        loc = _next_region()
-        model = _models[loc]
+        loc = _next_region(model_name)
+        model_obj = _models[(loc, model_name)]
         limiter = _limiters[loc]
         full_prompt = (f"{system.strip()}\n\n{prompt}" if system else prompt)
         limiter.wait()
         try:
-            resp = model.generate_content(
+            resp = model_obj.generate_content(
                 full_prompt,
                 generation_config=GenerationConfig(
                     max_output_tokens=max_output_tokens,
@@ -145,7 +153,8 @@ def generate(prompt: str, system: str | None = None,
 def generate_with_images(prompt: str, image_paths: Iterable[str],
                          system: str | None = None,
                          max_output_tokens: int = 8192,
-                         retries: int = 3, use_cache: bool = True) -> str:
+                         retries: int = 3, use_cache: bool = True,
+                         model: str | None = None) -> str:
     """Multimodal — text prompt + images (file paths)."""
     from vertexai.generative_models import Part, GenerationConfig
     image_paths_list = list(image_paths)
@@ -155,7 +164,7 @@ def generate_with_images(prompt: str, image_paths: Iterable[str],
     for p in image_paths_list:
         with open(p, "rb") as f:
             img_hashes.append(hashlib.sha256(f.read()).hexdigest()[:16])
-    model_name = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
+    model_name = model or os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
     cache_payload = {"m": model_name, "p": prompt, "s": system or "",
                      "imgs": img_hashes, "max": max_output_tokens, "kind": "multimodal"}
     key = _cache_key(cache_payload)
@@ -164,20 +173,30 @@ def generate_with_images(prompt: str, image_paths: Iterable[str],
         if hit is not None:
             return hit
 
+    import mimetypes
     parts: list = []
     for p in image_paths_list:
+        guessed, _ = mimetypes.guess_type(str(p))
+        # Default to png for unknown image-like; fall back to pdf header detection
         with open(p, "rb") as f:
-            parts.append(Part.from_data(data=f.read(), mime_type="image/png"))
+            data = f.read()
+        if not guessed:
+            if data[:4] == b"%PDF":
+                guessed = "application/pdf"
+            else:
+                guessed = "image/png"
+        # Vertex supports image/* and application/pdf for inline data
+        parts.append(Part.from_data(data=data, mime_type=guessed))
     full_prompt = (f"{system.strip()}\n\n{prompt}" if system else prompt)
     parts.append(full_prompt)
     last_err = ""
     for attempt in range(retries):
-        loc = _next_region()
-        model = _models[loc]
+        loc = _next_region(model_name)
+        model_obj = _models[(loc, model_name)]
         limiter = _limiters[loc]
         limiter.wait()
         try:
-            resp = model.generate_content(
+            resp = model_obj.generate_content(
                 parts,
                 generation_config=GenerationConfig(
                     max_output_tokens=max_output_tokens,

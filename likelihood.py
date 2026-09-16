@@ -20,7 +20,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from analyze import TOPICS
+from analyze import TOPICS, detect_course_id, topics_for_course
 
 EXAM_CATEGORIES = {"exams", "exam_solutions", "practice"}
 PREP_CATEGORIES = {"homeworks", "hw_keys", "in_class"}
@@ -41,6 +41,9 @@ def main() -> int:
     args = ap.parse_args()
     cdir = Path(args.course_dir)
 
+    global TOPICS
+    TOPICS = topics_for_course(detect_course_id(cdir) or 0)
+
     bundles = cdir / "bundles"
     problems_file = bundles / "problems.json"
     if not problems_file.exists():
@@ -56,9 +59,13 @@ def main() -> int:
     practice_freq = topic_hits(load("practice"))
     exams_freq = topic_hits(load("exams") + "\n" + load("exam_solutions"))
 
-    # Chapter recency from topic_graph
+    # Formula-sheet weights (heaviest signal — prof curates this for the exam)
     sys.path.insert(0, str(Path(__file__).parent))
-    from topic_graph import GRAPH
+    from problems import formula_topic_weights
+    fweights = formula_topic_weights(cdir)
+
+    from topic_graph import for_course as _graph_for_course
+    GRAPH = _graph_for_course(detect_course_id(cdir) or 0) or __import__('topic_graph').GRAPH
 
     # share gap (if available)
     gap_file = bundles / "topic_gap.json"
@@ -74,6 +81,8 @@ def main() -> int:
             score = 0.0
             score += 3.0 * practice_freq.get(topic, 0) / max(sum(practice_freq.values()), 1) * 100
             score += 2.0 * exams_freq.get(topic, 0) / max(sum(exams_freq.values()), 1) * 100
+            # Formula-sheet boost — strongest exam-likelihood proxy.
+            score += 4.0 * fweights.get(topic, 0.0) * 100
             src = p["source"].lower()
             if "practice" in src or "extra" in src:
                 score += 4.0

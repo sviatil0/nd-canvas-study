@@ -1,0 +1,813 @@
+{% extends "ui/base.html" %}
+{% block title %}Tutor chat · {{ cid }}{% endblock %}
+{% block content %}
+<style>
+  /* Override base container max-height so chat fills viewport */
+  .chat-shell { display:flex; flex-direction:column; height: calc(100vh - 100px); gap:0.5rem; }
+  .chat-header-fixed {
+    position: sticky; top: 0; z-index: 50;
+    background: var(--c-bg); padding: 0.5rem 0;
+    border-bottom: 1px solid var(--c-border);
+  }
+  .chat-body-row { flex: 1 1 auto; min-height: 0; display:flex; gap: 0.75rem; }
+  .chat-sidebar { flex: 0 0 240px; display:flex; flex-direction:column; min-height: 0; }
+  .chat-sidebar .card { flex: 1 1 auto; display:flex; flex-direction:column; min-height: 0; }
+  .chat-sidebar .list-group { flex: 1 1 auto; overflow:auto; }
+  .chat-main { flex: 1 1 auto; display:flex; flex-direction:column; min-height: 0; }
+  #chat-thread { flex: 1 1 auto; overflow-y: auto; padding: 0.5rem 0.25rem; min-height: 0; }
+  .chat-composer-fixed { flex: 0 0 auto; }
+  @media (max-width: 768px) {
+    .chat-body-row { flex-direction: column; }
+    .chat-sidebar { flex: 0 0 auto; max-height: 30vh; }
+  }
+</style>
+
+<div class="chat-shell">
+  <div class="chat-header-fixed d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <div>
+      <a class="btn btn-sm btn-outline-secondary me-2" href="{% url 'ui:course_detail' cid %}">&larr; course</a>
+      <strong class="fs-5">💬 Tutor chat</strong>
+      <small class="text-muted ms-2">
+        RAG over OCR'd notes/HW/exams + formula sheet · {{ total_messages }} msgs
+        {% if not has_chroma %}<span class="text-danger">· Chroma missing</span>{% endif %}
+      </small>
+    </div>
+    <div class="d-flex gap-2 align-items-center">
+      <div class="form-check form-switch mb-0">
+        <input class="form-check-input" type="checkbox" id="chat-thinking">
+        <label class="form-check-label small" for="chat-thinking">🧠 Pro</label>
+      </div>
+    </div>
+  </div>
+
+  <div class="chat-body-row">
+    <!-- Sidebar -->
+    <div class="chat-sidebar">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center py-2">
+          <strong class="small">Chats</strong>
+          <button class="btn btn-sm btn-success" id="chat-new-btn" title="Start new chat">+ New</button>
+        </div>
+        <div class="list-group list-group-flush" id="chat-list">
+          {% for c in chats %}
+            <a href="?chat_id={{ c.id }}"
+               class="list-group-item list-group-item-action small d-flex justify-content-between align-items-start gap-2 {% if c.id == active_id %}active{% endif %}"
+               data-chat-id="{{ c.id }}">
+              <span class="text-truncate" style="min-width:0;" title="{{ c.title }}">{{ c.title }}</span>
+              <button class="btn btn-sm btn-link p-0 chat-del-btn text-danger" type="button"
+                      data-chat-id="{{ c.id }}" title="Delete chat" onclick="event.preventDefault();event.stopPropagation();">×</button>
+            </a>
+          {% empty %}
+            <div class="list-group-item small text-muted">No chats yet. Click <strong>+ New</strong>.</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Main thread + composer -->
+    <div class="chat-main">
+      <div id="chat-thread" data-next-offset="{{ next_offset }}" data-has-older="{% if has_older %}1{% else %}0{% endif %}">
+        {% if has_older %}
+        <div id="load-earlier-wrap" class="text-center mb-2">
+          <button class="btn btn-sm btn-outline-secondary" id="load-earlier-btn">↑ Load earlier ({{ next_offset }} more)</button>
+        </div>
+        {% endif %}
+      {% for turn in history %}
+        {% if turn.role == 'user' %}
+          <div class="mb-2 d-flex justify-content-end">
+            <div class="alert alert-primary mb-0 py-2 px-3" style="max-width:80%;">
+              <strong class="small">You</strong>
+              {% if turn.attachments %}
+              <div class="d-flex flex-wrap gap-1 my-1">
+                {% for a in turn.attachments %}
+                  <span class="badge bg-light text-dark border" title="{{ a.size }} bytes">📎 {{ a.name }}</span>
+                {% endfor %}
+              </div>
+              {% endif %}
+              <div class="mt-1" style="white-space:pre-wrap;">{{ turn.content }}</div>
+            </div>
+          </div>
+        {% else %}
+          <div class="mb-3">
+            <div class="alert alert-light border border-info py-2 px-3" style="border-left-width:4px !important;">
+              <strong class="small text-info">🤖 Tutor</strong>
+              <small class="text-muted ms-2">{{ turn.model|default:'gemini' }}</small>
+              <div class="mt-1 chat-md" data-raw="{{ turn.content|escape }}"></div>
+              {% if turn.tool_calls %}
+              <details class="mt-2">
+                <summary class="small text-success" style="cursor:pointer;">🛠 Tools used ({{ turn.tool_calls|length }})</summary>
+                <ul class="small text-muted mt-1 mb-0">
+                  {% for tc in turn.tool_calls %}
+                  <li><code>{{ tc.name }}</code>({{ tc.args }}) → <em>{{ tc.result_preview }}</em></li>
+                  {% endfor %}
+                </ul>
+              </details>
+              {% endif %}
+              {% if turn.sources %}
+              <details class="mt-2">
+                <summary class="small text-muted" style="cursor:pointer;">Sources used ({{ turn.sources|length }})</summary>
+                <ul class="small text-muted mt-1 mb-0">
+                  {% for s in turn.sources %}
+                  <li><code>{{ s.source }}</code> p{{ s.page }} <span class="badge bg-light text-dark border">{{ s.category }}</span> <span class="text-muted">d={{ s.dist }}</span></li>
+                  {% endfor %}
+                </ul>
+              </details>
+              {% endif %}
+            </div>
+          </div>
+        {% endif %}
+      {% empty %}
+        <div class="alert alert-secondary">Empty chat. Type a question below.</div>
+      {% endfor %}
+    </div>
+
+    <div class="card chat-composer-fixed shadow-sm">
+      <div class="card-body p-2">
+        <form id="chat-form" class="d-flex flex-column gap-2">{% csrf_token %}
+          <input type="hidden" id="chat-id" value="{{ active_id }}">
+          <div id="attachment-chips" class="d-flex flex-wrap gap-1"></div>
+          <div class="d-flex gap-2 align-items-stretch">
+            <textarea class="form-control flex-grow-1" id="chat-input" rows="2"
+                      placeholder="Ask anything (Cmd/Ctrl+Enter to send) — paste images / drag-drop PDFs / attach files"
+                      style="resize:vertical;"></textarea>
+            <div class="d-flex flex-column gap-1 flex-shrink-0">
+              <label class="btn btn-sm btn-outline-secondary mb-0" title="Attach images / PDFs">
+                📎
+                <input type="file" id="chat-file" multiple class="d-none"
+                       accept="image/*,application/pdf">
+              </label>
+              <button class="btn btn-sm btn-outline-secondary" type="button" id="chat-mic-btn"
+                      title="Voice input (single utterance)">🎤</button>
+              <button class="btn btn-sm btn-outline-secondary" type="button" id="chat-live-btn"
+                      title="Live conversation mode (continuous voice + streaming reply)">🎙</button>
+              <button class="btn btn-sm btn-outline-secondary" type="button" id="chat-speak-btn"
+                      title="Auto-read replies aloud" data-on="0">🔇</button>
+              <button class="btn btn-primary" type="submit" id="chat-send-btn">
+                <span class="btn-label">Send</span>
+                <span class="spinner-border spinner-border-sm d-none" id="chat-spin"></span>
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.split('=')[1] || '';
+const thread = document.getElementById('chat-thread');
+const input = document.getElementById('chat-input');
+const sendBtn = document.getElementById('chat-send-btn');
+const spin = document.getElementById('chat-spin');
+const sendLabel = sendBtn.querySelector('.btn-label');
+const chatIdInput = document.getElementById('chat-id');
+
+document.querySelectorAll('.chat-md').forEach(el => {
+  const raw = el.dataset.raw || '';
+  if (raw) {
+    window.markedReady.then(() => {
+      window.renderMarkdownInto(el, raw);
+      if (window.renderMathInElement) renderMathIn(el);
+    });
+  }
+});
+
+// Initial scroll to bottom (newest)
+requestAnimationFrame(() => {
+  thread.scrollTop = thread.scrollHeight;
+});
+
+// Lazy "Load earlier" pagination
+const loadEarlierBtn = document.getElementById('load-earlier-btn');
+async function loadEarlier() {
+  const offset = parseInt(thread.dataset.nextOffset || '0', 10);
+  if (offset <= 0) return;
+  loadEarlierBtn.disabled = true;
+  loadEarlierBtn.textContent = 'Loading…';
+  // Preserve scroll-from-top so view doesn't jump
+  const oldHeight = thread.scrollHeight;
+  try {
+    const r = await fetch(
+      `{% url 'ui:chat_history_page' cid %}?chat_id={{ active_id }}&before=${offset}`
+    );
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    const wrap = document.getElementById('load-earlier-wrap');
+    // Insert messages BEFORE the wrap
+    data.messages.forEach(turn => {
+      const node = renderTurn(turn);
+      thread.insertBefore(node, wrap);
+    });
+    thread.dataset.nextOffset = String(data.next_offset);
+    if (!data.has_older) {
+      wrap.remove();
+    } else {
+      loadEarlierBtn.textContent = '↑ Load earlier (' + data.next_offset + ' more)';
+      loadEarlierBtn.disabled = false;
+    }
+    // Maintain scroll position relative to viewport
+    thread.scrollTop = thread.scrollHeight - oldHeight;
+  } catch (e) {
+    loadEarlierBtn.textContent = 'Load failed (' + e + ')';
+    loadEarlierBtn.disabled = false;
+  }
+}
+if (loadEarlierBtn) loadEarlierBtn.addEventListener('click', loadEarlier);
+
+// Build a turn DOM node from a JSON message (used by pagination)
+function renderTurn(turn) {
+  if (turn.role === 'user') {
+    const wrap = document.createElement('div');
+    wrap.className = 'mb-2 d-flex justify-content-end';
+    const box = document.createElement('div');
+    box.className = 'alert alert-primary mb-0 py-2 px-3';
+    box.style.maxWidth = '80%';
+    const head = document.createElement('strong');
+    head.className = 'small';
+    head.textContent = 'You';
+    box.appendChild(head);
+    if (turn.attachments && turn.attachments.length) {
+      const row = document.createElement('div');
+      row.className = 'd-flex flex-wrap gap-1 my-1';
+      turn.attachments.forEach(a => {
+        const b = document.createElement('span');
+        b.className = 'badge bg-light text-dark border';
+        b.textContent = '📎 ' + a.name;
+        row.appendChild(b);
+      });
+      box.appendChild(row);
+    }
+    const body = document.createElement('div');
+    body.className = 'mt-1';
+    body.style.whiteSpace = 'pre-wrap';
+    body.textContent = turn.content || '';
+    box.appendChild(body);
+    wrap.appendChild(box);
+    return wrap;
+  } else {
+    const wrap = document.createElement('div');
+    wrap.className = 'mb-3';
+    const box = document.createElement('div');
+    box.className = 'alert alert-light border border-info py-2 px-3';
+    box.style.borderLeftWidth = '4px';
+    const head = document.createElement('strong');
+    head.className = 'small text-info';
+    head.textContent = '🤖 Tutor';
+    box.appendChild(head);
+    if (turn.model) {
+      const m = document.createElement('small');
+      m.className = 'text-muted ms-2';
+      m.textContent = turn.model;
+      box.appendChild(m);
+    }
+    const md = document.createElement('div');
+    md.className = 'mt-1';
+    box.appendChild(md);
+    window.markedReady.then(() => {
+      window.renderMarkdownInto(md, turn.content || '');
+      if (window.renderMathInElement) renderMathIn(md);
+    });
+    wrap.appendChild(box);
+    return wrap;
+  }
+}
+
+function appendUser(q, attachmentNames) {
+  const wrap = document.createElement('div');
+  wrap.className = 'mb-2 d-flex justify-content-end';
+  const box = document.createElement('div');
+  box.className = 'alert alert-primary mb-0 py-2 px-3';
+  box.style.maxWidth = '80%';
+  const head = document.createElement('strong');
+  head.className = 'small';
+  head.textContent = 'You';
+  box.appendChild(head);
+  if (attachmentNames && attachmentNames.length) {
+    const row = document.createElement('div');
+    row.className = 'd-flex flex-wrap gap-1 my-1';
+    attachmentNames.forEach(n => {
+      const b = document.createElement('span');
+      b.className = 'badge bg-light text-dark border';
+      b.textContent = '📎 ' + n;
+      row.appendChild(b);
+    });
+    box.appendChild(row);
+  }
+  const body = document.createElement('div');
+  body.className = 'mt-1';
+  body.style.whiteSpace = 'pre-wrap';
+  body.textContent = q;
+  box.appendChild(body);
+  wrap.appendChild(box);
+  thread.querySelectorAll('.alert-secondary').forEach(a => {
+    if (a.textContent.includes('Empty chat')) a.remove();
+  });
+  thread.appendChild(wrap);
+  return wrap;
+}
+
+function appendAssistantPlaceholder() {
+  const wrap = document.createElement('div');
+  wrap.className = 'mb-3';
+  const box = document.createElement('div');
+  box.className = 'alert alert-light border border-info py-2 px-3';
+  box.style.borderLeftWidth = '4px';
+  const head = document.createElement('strong');
+  head.className = 'small text-info';
+  head.textContent = '🤖 Tutor';
+  box.appendChild(head);
+  const md = document.createElement('div');
+  md.className = 'mt-1';
+  const placeholder = document.createElement('em');
+  placeholder.className = 'text-muted';
+  placeholder.textContent = '⚡ thinking…';
+  md.appendChild(placeholder);
+  box.appendChild(md);
+  wrap.appendChild(box);
+  thread.appendChild(wrap);
+  return {wrap, box, md, placeholder};
+}
+
+// Pending attachments state
+const pendingFiles = [];
+const fileInput = document.getElementById('chat-file');
+const chipsBox = document.getElementById('attachment-chips');
+
+function refreshChips() {
+  chipsBox.replaceChildren();
+  pendingFiles.forEach((f, idx) => {
+    const chip = document.createElement('span');
+    chip.className = 'badge bg-light text-dark border d-flex align-items-center gap-1';
+    const icon = document.createElement('span');
+    icon.textContent = f.type.startsWith('image/') ? '🖼' : (f.type === 'application/pdf' ? '📄' : '📎');
+    chip.appendChild(icon);
+    chip.append(' ' + f.name + ' (' + Math.round(f.size/1024) + ' KB) ');
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'btn-close btn-close-sm';
+    x.style.fontSize = '0.6em';
+    x.title = 'Remove';
+    x.addEventListener('click', () => { pendingFiles.splice(idx, 1); refreshChips(); });
+    chip.appendChild(x);
+    chipsBox.appendChild(chip);
+  });
+}
+
+fileInput.addEventListener('change', () => {
+  Array.from(fileInput.files).forEach(f => pendingFiles.push(f));
+  fileInput.value = '';
+  refreshChips();
+});
+
+input.addEventListener('paste', e => {
+  const items = e.clipboardData?.items || [];
+  let added = false;
+  for (const it of items) {
+    if (it.kind === 'file') {
+      const f = it.getAsFile();
+      if (f) { pendingFiles.push(f); added = true; }
+    }
+  }
+  if (added) { e.preventDefault(); refreshChips(); }
+});
+
+const composer = document.getElementById('chat-form');
+composer.addEventListener('dragover', e => { e.preventDefault(); composer.style.outline = '2px dashed var(--c-primary)'; });
+composer.addEventListener('dragleave', () => { composer.style.outline = ''; });
+composer.addEventListener('drop', e => {
+  composer.style.outline = '';
+  if (!e.dataTransfer?.files?.length) return;
+  e.preventDefault();
+  Array.from(e.dataTransfer.files).forEach(f => pendingFiles.push(f));
+  refreshChips();
+});
+
+async function send() {
+  const q = input.value.trim();
+  if (!q && pendingFiles.length === 0) return;
+  const thinking = document.getElementById('chat-thinking').checked;
+  appendUser(q || '(attachments only)', pendingFiles.map(f => f.name));
+  const {box, md, placeholder} = appendAssistantPlaceholder();
+  input.value = '';
+  sendBtn.disabled = true;
+  spin.classList.remove('d-none');
+  sendLabel.textContent = thinking ? '🧠' : '⚡';
+  if (thinking) placeholder.textContent = '🧠 thinking with Pro…';
+  thread.scrollIntoView({block:'end', behavior:'smooth'});
+  const fd = new FormData();
+  fd.append('question', q);
+  fd.append('chat_id', chatIdInput.value);
+  if (thinking) fd.append('thinking', '1');
+  pendingFiles.forEach(f => fd.append('attachment', f, f.name));
+  // Clear pending now that they're in flight
+  const sent = pendingFiles.splice(0, pendingFiles.length);
+  refreshChips();
+  try {
+    const r = await fetch("{% url 'ui:chat_ask' cid %}", {
+      method:'POST', headers:{'X-CSRFToken': csrf}, body: fd,
+    });
+    const data = await r.json();
+    md.replaceChildren();
+    if (data.error) {
+      const err = document.createElement('div');
+      err.className = 'text-danger';
+      err.textContent = 'Error: ' + data.error;
+      md.appendChild(err);
+    } else {
+      // Track new chat_id if backend created one for us
+      if (data.chat_id && data.chat_id !== chatIdInput.value) {
+        chatIdInput.value = data.chat_id;
+        // Update browser URL without reload
+        const u = new URL(window.location);
+        u.searchParams.set('chat_id', data.chat_id);
+        window.history.replaceState({}, '', u);
+      }
+      const small = document.createElement('small');
+      small.className = 'text-muted ms-2';
+      small.textContent = data.model || '';
+      box.querySelector('strong').after(small);
+      window.renderMarkdownInto(md, data.answer || '');
+      if (window.renderMathInElement) renderMathIn(md);
+      if (window._chatSpeakOn && data.answer) speakReply(data.answer);
+      if (data.tool_calls && data.tool_calls.length) {
+        const det = document.createElement('details');
+        det.className = 'mt-2';
+        const sum = document.createElement('summary');
+        sum.className = 'small text-success';
+        sum.style.cursor = 'pointer';
+        sum.textContent = '🛠 Tools used (' + data.tool_calls.length + ')';
+        det.appendChild(sum);
+        const ul = document.createElement('ul');
+        ul.className = 'small text-muted mt-1 mb-0';
+        data.tool_calls.forEach(tc => {
+          const li = document.createElement('li');
+          const code = document.createElement('code');
+          code.textContent = tc.name;
+          li.appendChild(code);
+          li.append('(' + JSON.stringify(tc.args) + ') → ');
+          const em = document.createElement('em');
+          em.textContent = tc.result_preview;
+          li.appendChild(em);
+          ul.appendChild(li);
+        });
+        det.appendChild(ul);
+        box.appendChild(det);
+      }
+      if (data.sources && data.sources.length) {
+        const det = document.createElement('details');
+        det.className = 'mt-2';
+        const sum = document.createElement('summary');
+        sum.className = 'small text-muted';
+        sum.style.cursor = 'pointer';
+        sum.textContent = 'Sources used (' + data.sources.length + ')';
+        det.appendChild(sum);
+        const ul = document.createElement('ul');
+        ul.className = 'small text-muted mt-1 mb-0';
+        data.sources.forEach(s => {
+          const li = document.createElement('li');
+          const code = document.createElement('code');
+          code.textContent = s.source;
+          li.appendChild(code);
+          li.append(' p' + s.page + ' ');
+          const cat = document.createElement('span');
+          cat.className = 'badge bg-light text-dark border';
+          cat.textContent = s.category || '';
+          li.appendChild(cat);
+          li.append(' d=' + s.dist);
+          ul.appendChild(li);
+        });
+        det.appendChild(ul);
+        box.appendChild(det);
+      }
+    }
+  } catch (e) {
+    md.replaceChildren();
+    const err = document.createElement('div');
+    err.className = 'text-danger';
+    err.textContent = 'Failed: ' + e;
+    md.appendChild(err);
+  } finally {
+    sendBtn.disabled = false;
+    spin.classList.add('d-none');
+    sendLabel.textContent = 'Send';
+    input.focus();
+    setTimeout(() => box.scrollIntoView({block:'end', behavior:'smooth'}), 100);
+  }
+}
+
+document.getElementById('chat-form').addEventListener('submit', e => { e.preventDefault(); send(); });
+input.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); }
+});
+
+document.getElementById('chat-new-btn').addEventListener('click', async () => {
+  const r = await fetch("{% url 'ui:chat_new' cid %}", {
+    method:'POST', headers:{'X-CSRFToken': csrf},
+  });
+  const data = await r.json();
+  if (data.ok) window.location.search = '?chat_id=' + data.chat_id;
+});
+
+document.querySelectorAll('.chat-del-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    if (!confirm('Delete this chat?')) return;
+    const fd = new FormData();
+    fd.append('chat_id', btn.dataset.chatId);
+    await fetch("{% url 'ui:chat_delete' cid %}", {
+      method:'POST', headers:{'X-CSRFToken': csrf}, body: fd,
+    });
+    window.location = "{% url 'ui:chat' cid %}";
+  });
+});
+
+input.focus();
+
+// === Voice input + auto-read (Web Speech API) ===
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+const micBtn = document.getElementById('chat-mic-btn');
+const speakBtn = document.getElementById('chat-speak-btn');
+let recognizer = null;
+let listening = false;
+
+if (!SpeechRec) {
+  micBtn.disabled = true;
+  micBtn.title = 'Voice not supported in this browser';
+  micBtn.textContent = '🚫';
+} else {
+  micBtn.addEventListener('click', () => {
+    if (listening) { recognizer && recognizer.stop(); return; }
+    recognizer = new SpeechRec();
+    recognizer.lang = 'en-US';
+    recognizer.interimResults = true;
+    recognizer.continuous = false;
+    let finalText = input.value ? input.value + ' ' : '';
+    recognizer.onstart = () => {
+      listening = true;
+      micBtn.classList.add('btn-danger'); micBtn.classList.remove('btn-outline-secondary');
+      micBtn.textContent = '⏺';
+    };
+    recognizer.onresult = (e) => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finalText += t + ' ';
+        else interim += t;
+      }
+      input.value = (finalText + interim).trim();
+    };
+    recognizer.onerror = (e) => { console.warn('mic err', e.error); };
+    recognizer.onend = () => {
+      listening = false;
+      micBtn.classList.remove('btn-danger'); micBtn.classList.add('btn-outline-secondary');
+      micBtn.textContent = '🎤';
+      input.focus();
+    };
+    try { recognizer.start(); }
+    catch (err) { console.warn(err); }
+  });
+}
+
+// Auto-read toggle
+window._chatSpeakOn = localStorage.getItem('chat:speak') === '1';
+function refreshSpeakBtn() {
+  speakBtn.textContent = window._chatSpeakOn ? '🔊' : '🔇';
+  speakBtn.title = window._chatSpeakOn ? 'Auto-read ON (click to mute)' : 'Auto-read OFF (click to enable)';
+  speakBtn.dataset.on = window._chatSpeakOn ? '1' : '0';
+}
+refreshSpeakBtn();
+speakBtn.addEventListener('click', () => {
+  window._chatSpeakOn = !window._chatSpeakOn;
+  localStorage.setItem('chat:speak', window._chatSpeakOn ? '1' : '0');
+  refreshSpeakBtn();
+  if (!window._chatSpeakOn && window.speechSynthesis) window.speechSynthesis.cancel();
+});
+
+function _stripForTTS(md) {
+  // Strip code blocks, inline code, latex, markdown chrome → keep prose
+  let t = md.replace(/```[\s\S]*?```/g, ' code block omitted. ');
+  t = t.replace(/`([^`]+)`/g, '$1');
+  t = t.replace(/\$\$[\s\S]*?\$\$/g, ' formula omitted. ');
+  t = t.replace(/\$([^$\n]+)\$/g, '$1');
+  t = t.replace(/[#*_>~]/g, '');
+  t = t.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+  t = t.replace(/\s+/g, ' ').trim();
+  // Cap long replies — TTS gets boring after ~600 chars
+  if (t.length > 1200) t = t.slice(0, 1200) + '. Reply truncated for audio. Read on screen for full answer.';
+  return t;
+}
+
+window.speakReply = function(md) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const text = _stripForTTS(md);
+  if (!text) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1.15;
+  u.pitch = 1.0;
+  // Prefer a high-quality female voice if available
+  const voices = window.speechSynthesis.getVoices();
+  const pref = voices.find(v => /female|samantha|aoede|jenny|joanna/i.test(v.name) && v.lang.startsWith('en'))
+            || voices.find(v => v.lang === 'en-US')
+            || voices[0];
+  if (pref) u.voice = pref;
+  window.speechSynthesis.speak(u);
+};
+
+// === LIVE MODE: continuous voice + SSE streaming + sentence-level TTS ===
+const liveBtn = document.getElementById('chat-live-btn');
+let liveActive = false;
+let liveRecognizer = null;
+let speakQueue = [];
+let speakingNow = false;
+let preferredVoice = null;
+
+function _pickVoice() {
+  const voices = window.speechSynthesis.getVoices();
+  preferredVoice = voices.find(v => /female|samantha|aoede|jenny|joanna/i.test(v.name) && v.lang.startsWith('en'))
+                || voices.find(v => v.lang === 'en-US')
+                || voices[0] || null;
+}
+if (window.speechSynthesis) {
+  _pickVoice();
+  window.speechSynthesis.onvoiceschanged = _pickVoice;
+}
+
+function _enqueueSpeak(sentence) {
+  if (!sentence || !window.speechSynthesis) return;
+  speakQueue.push(sentence);
+  _drainSpeakQueue();
+}
+function _drainSpeakQueue() {
+  if (speakingNow || !speakQueue.length) return;
+  const s = speakQueue.shift();
+  const u = new SpeechSynthesisUtterance(s);
+  u.rate = 1.1; u.pitch = 1.0;
+  if (preferredVoice) u.voice = preferredVoice;
+  speakingNow = true;
+  u.onend = () => { speakingNow = false; _drainSpeakQueue(); };
+  u.onerror = () => { speakingNow = false; _drainSpeakQueue(); };
+  window.speechSynthesis.speak(u);
+}
+
+async function streamAsk(question) {
+  // Pause recognition while bot speaks (avoid TTS bleeding into mic)
+  if (liveRecognizer) try { liveRecognizer.stop(); } catch(e) {}
+  appendUser(question, []);
+  const {md} = appendAssistantPlaceholder();
+  md.textContent = '';
+  let buffer = '';      // text not yet broken at sentence
+  let fullText = '';
+  const fd = new FormData();
+  fd.append('question', question);
+  const cid = chatIdInput.value;
+  if (cid) fd.append('chat_id', cid);
+  const resp = await fetch("{% url 'ui:chat_ask_stream' cid %}", {
+    method: 'POST',
+    headers: {'X-CSRFToken': csrf},
+    body: fd,
+  });
+  if (!resp.ok) {
+    md.textContent = '(stream error: HTTP ' + resp.status + ')';
+    _restartLiveListening();
+    return;
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let sseBuf = '';
+  while (true) {
+    const {value, done} = await reader.read();
+    if (done) break;
+    sseBuf += decoder.decode(value, {stream: true});
+    // Parse SSE events
+    const events = sseBuf.split('\n\n');
+    sseBuf = events.pop();
+    for (const ev of events) {
+      if (!ev.trim()) continue;
+      const lines = ev.split('\n');
+      let evType = 'message', dataStr = '';
+      for (const ln of lines) {
+        if (ln.startsWith('event:')) evType = ln.slice(6).trim();
+        else if (ln.startsWith('data:')) dataStr += ln.slice(5).trim();
+      }
+      let payload = {};
+      try { payload = JSON.parse(dataStr); } catch(e) { continue; }
+      if (evType === 'meta') {
+        if (payload.chat_id && !chatIdInput.value) chatIdInput.value = payload.chat_id;
+      } else if (evType === 'chunk') {
+        const t = payload.text || '';
+        fullText += t;
+        buffer += t;
+        md.textContent = fullText;
+        thread.scrollTop = thread.scrollHeight;
+        // Break buffer at sentence boundaries → enqueue TTS
+        const sentenceMatch = buffer.match(/([\s\S]+?[.!?])(?:\s|$)/);
+        while (sentenceMatch) {
+          const sent = sentenceMatch[1].trim();
+          buffer = buffer.slice(sentenceMatch[0].length);
+          if (sent) _enqueueSpeak(_stripForTTS(sent));
+          const next = buffer.match(/([\s\S]+?[.!?])(?:\s|$)/);
+          if (!next) break;
+          sentenceMatch[0] = next[0]; sentenceMatch[1] = next[1];
+        }
+      } else if (evType === 'done') {
+        if (buffer.trim()) _enqueueSpeak(_stripForTTS(buffer.trim()));
+      } else if (evType === 'error') {
+        md.textContent = '(error: ' + (payload.error || 'unknown') + ')';
+      }
+    }
+  }
+  // Render final markdown for posterity
+  if (window.renderMarkdownInto) window.renderMarkdownInto(md, fullText);
+  // Wait for TTS to finish, then resume listening
+  _waitTTSAndResume();
+}
+
+function _waitTTSAndResume() {
+  if (!liveActive) return;
+  if (speakingNow || speakQueue.length) {
+    setTimeout(_waitTTSAndResume, 400);
+    return;
+  }
+  _restartLiveListening();
+}
+
+function _restartLiveListening() {
+  if (!liveActive) return;
+  try { liveRecognizer && liveRecognizer.start(); } catch(e) { /* already started */ }
+}
+
+function _startLiveMode() {
+  if (!SpeechRec) { alert('Voice recognition not supported in this browser.'); return; }
+  liveActive = true;
+  liveBtn.classList.add('btn-danger'); liveBtn.classList.remove('btn-outline-secondary');
+  liveBtn.textContent = '⏹';
+  liveBtn.title = 'Stop live mode';
+  // Force speaker on for live mode UX
+  liveRecognizer = new SpeechRec();
+  liveRecognizer.lang = 'en-US';
+  liveRecognizer.interimResults = true;
+  liveRecognizer.continuous = false; // we re-arm in onend for cross-browser compat
+  let buf = '';
+  let lastResultAt = 0;
+  let silenceTimer = null;
+  liveRecognizer.onstart = () => {
+    buf = ''; input.placeholder = '🎙 Listening… (live mode)';
+  };
+  liveRecognizer.onresult = (e) => {
+    let interim = '', final = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) final += e.results[i][0].transcript + ' ';
+      else interim += e.results[i][0].transcript;
+    }
+    if (final) buf += final;
+    input.value = (buf + interim).trim();
+    lastResultAt = Date.now();
+    // Reset silence timer; auto-send if 1.2s passes after last word
+    if (silenceTimer) clearTimeout(silenceTimer);
+    if (buf.trim().length > 2) {
+      silenceTimer = setTimeout(() => {
+        if (!liveActive) return;
+        if (buf.trim().length < 3) return;
+        try { liveRecognizer.stop(); } catch(e) {}
+        const q = buf.trim();
+        buf = ''; input.value = '';
+        streamAsk(q);
+      }, 1200);
+    }
+  };
+  liveRecognizer.onerror = (e) => {
+    console.warn('live mic err', e.error);
+    if (e.error === 'not-allowed') { _stopLiveMode(); alert('Mic permission denied.'); }
+  };
+  liveRecognizer.onend = () => {
+    if (!liveActive) return;
+    // Auto-restart unless we're mid-stream / TTS-playing (handled by _waitTTSAndResume)
+    if (!speakingNow && !speakQueue.length) {
+      try { liveRecognizer.start(); } catch(e) { /* race ok */ }
+    }
+  };
+  try { liveRecognizer.start(); } catch(e) {}
+}
+
+function _stopLiveMode() {
+  liveActive = false;
+  if (liveRecognizer) try { liveRecognizer.abort(); } catch(e) {}
+  liveRecognizer = null;
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  speakQueue = []; speakingNow = false;
+  liveBtn.classList.remove('btn-danger'); liveBtn.classList.add('btn-outline-secondary');
+  liveBtn.textContent = '🎙';
+  liveBtn.title = 'Live conversation mode';
+  input.placeholder = 'Ask anything (Cmd/Ctrl+Enter to send) — paste images / drag-drop PDFs / attach files';
+}
+
+if (!SpeechRec) {
+  liveBtn.disabled = true; liveBtn.title = 'Voice not supported';
+} else {
+  liveBtn.addEventListener('click', () => {
+    if (liveActive) _stopLiveMode(); else _startLiveMode();
+  });
+}
+</script>
+{% endblock %}

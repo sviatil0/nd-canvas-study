@@ -18,7 +18,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import networkx as nx
 
-from topic_graph import GRAPH
+from topic_graph import GRAPH, for_course as graph_for_course
 
 
 def build() -> nx.DiGraph:
@@ -104,6 +104,10 @@ def main() -> int:
     ap.add_argument("--course-dir", required=True)
     args = ap.parse_args()
     cdir = Path(args.course_dir)
+
+    global GRAPH
+    from analyze import detect_course_id
+    GRAPH = graph_for_course(detect_course_id(cdir) or 0) or GRAPH
     out_dir = cdir / "bundles"
     out_dir.mkdir(parents=True, exist_ok=True)
     render(out_dir / "topic_graph.png")

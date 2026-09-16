@@ -20,19 +20,30 @@ from pypdf import PdfReader
 CATEGORY_PATTERNS = [
     ("hw_keys",        re.compile(r"hw[\w-]*[_ -]*(key|solution)", re.I)),
     ("homeworks",      re.compile(r"hw[\w-]*|homework", re.I)),
-    ("exam_solutions", re.compile(r"exam[\w -]*(solution|key)|e\d+[\w -]*solution", re.I)),
+    ("exam_solutions", re.compile(r"exam[\w -]*(solution|key)|e\d+[\w -]*solution|midterm[\w -]*-?graded|midterm[\w -]*-?solution", re.I)),
     ("practice",       re.compile(r"practice|extra.*problem|review", re.I)),
-    ("exams",          re.compile(r"\bexam\b|e\d+_|e\d+-|final", re.I)),
+    ("exams",          re.compile(r"\bexam\b|e\d+_|e\d+-|\bfinal\b|\bmidterm\b|\bmid[- _]?term\b", re.I)),
     ("in_class",       re.compile(r"inclass|in[-_ ]class", re.I)),
     ("tables",         re.compile(r"z-?table|t-?table|f-?table|chisq|studentized", re.I)),
-    ("lectures",       re.compile(r"lecture|chapter|ch\d+|notes|slides", re.I)),
+    ("textbook",       re.compile(r"clrs|cormen|textbook|ch\d+[-_ ]?(characterizing|divide|sorting|growth)", re.I)),
+    ("lectures",       re.compile(r"lecture|lec\d+|chapter|ch\d+|notes|slides|\(marked\)|cse\s*\d+\s*\w+\s*\d+\s*-\s*\d+", re.I)),
 ]
 
 
-def categorize(name: str) -> str:
+def categorize(name: str, full_path: str | None = None) -> str:
     for cat, pat in CATEGORY_PATTERNS:
         if pat.search(name):
             return cat
+    # Path-based fallback for course materials with non-descriptive filenames
+    # (e.g. Google Drive doc IDs like 1VpSa5Tm36-4yQ9K3E8XmRsPVyqvaJBcjaOo7Jv_qc80.pdf)
+    if full_path:
+        p = full_path.lower()
+        if "/presentation/" in p or "/slides/" in p:
+            return "lectures"
+        if "/exams/" in p:
+            return "exams"
+        if "/_textbook/" in p:
+            return "textbook"
     return "other"
 
 
@@ -77,7 +88,7 @@ def build(course_dir: Path) -> None:
 
     for pdf in sorted(walk_pdfs(course_dir)):
         rel = pdf.relative_to(course_dir)
-        cat = categorize(pdf.name)
+        cat = categorize(pdf.name, full_path=str(rel))
         text = extract_pdf(pdf, course_dir)
         manifest.append({
             "path": str(rel),

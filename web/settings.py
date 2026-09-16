@@ -25,7 +25,17 @@ SECRET_KEY = 'django-insecure-np+@15oc8-v%&5f_cwfs%3^ly+ix**u4*fo549vbt)sgwpd-d7
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["*"]  # local dev + ngrok tunnel
+CSRF_TRUSTED_ORIGINS = [
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+    "https://*.ngrok.io",
+    "https://*.ngrok-free.app",
+    "https://*.ngrok-free.dev",
+    "https://*.ngrok.app",
+    "https://*.ngrok.dev",
+    "https://*.trycloudflare.com",
+]
 
 
 # Application definition
@@ -62,6 +72,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'ui.context.current_cid',
             ],
         },
     },

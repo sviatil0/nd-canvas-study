@@ -1,0 +1,116 @@
+{% extends "ui/base.html" %}
+{% block title %}Regrade queue · {{ cid }}{% endblock %}
+{% block content %}
+<a class="btn btn-sm btn-outline-secondary mb-3" href="{% url 'ui:mistakes' cid %}">&larr; back to mistakes</a>
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h2 class="mb-0">🚩 Regrade queue</h2>
+    <small class="text-muted">{{ flagged|length }} flagged · {{ total_lost }} pts in question. Use this list when emailing the prof or visiting office hours.</small>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-primary" href="{% url 'ui:regrade_email_export' cid %}" target="_blank">📧 Export as email body</a>
+    <button class="btn btn-sm btn-outline-secondary" id="copy-email-btn">📋 Copy email body</button>
+  </div>
+</div>
+
+{% if not flagged %}
+  <div class="alert alert-secondary">
+    No mistakes flagged. On the <a href="{% url 'ui:mistakes' cid %}">Mistakes</a> page, click 🚩 next to any wrong question to add it here.
+  </div>
+{% endif %}
+
+{% for asgn_name, items in by_assignment %}
+<div class="card mb-4">
+  <div class="card-header bg-light">
+    <strong class="fs-5">{{ asgn_name }}</strong>
+    <span class="badge bg-warning text-dark ms-2">{{ items|length }} flagged</span>
+  </div>
+  <div class="card-body p-0">
+    {% for w in items %}
+    <div class="border-top p-3">
+      <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-2">
+        <div>
+          <strong>{{ w.title }}</strong>
+          <span class="badge bg-secondary ms-1">{{ w.score }} / {{ w.max_score }}</span>
+          <span class="badge bg-danger ms-1">−{{ w.lost }} pts ({{ w.pct_lost }}%)</span>
+          {% with status=w.flag.status %}
+          <span class="badge ms-1
+            {% if status == 'open' %}bg-warning text-dark
+            {% elif status == 'drafted' %}bg-info text-dark
+            {% elif status == 'sent' %}bg-primary
+            {% elif status == 'resolved' %}bg-success
+            {% elif status == 'rejected' %}bg-dark
+            {% else %}bg-secondary{% endif %}">{{ status }}</span>
+          {% endwith %}
+        </div>
+        <div class="d-flex gap-1">
+          <a class="btn btn-sm btn-outline-secondary" href="{{ w.assignment_url }}" target="_blank">Open in Gradescope ↗</a>
+          <a class="btn btn-sm btn-outline-danger" href="{% url 'ui:mistakes' cid %}#mistake-{{ w.assignment_id }}-{{ w.question_id }}">Edit on Mistakes</a>
+        </div>
+      </div>
+      {% if w.comments %}
+      <div class="alert alert-warning py-2 small mb-2">
+        <strong>Grader comment:</strong> {{ w.comments }}
+      </div>
+      {% endif %}
+      {% if w.flag.notes %}
+      <div class="alert alert-info py-2 small mb-2" style="white-space:pre-wrap;">
+        <strong>📝 My reasoning:</strong>
+{{ w.flag.notes }}
+      </div>
+      {% endif %}
+      <div class="row g-2">
+        <div class="col-md-6">
+          <div class="border rounded p-1 bg-white">
+            <strong class="d-block small text-danger mb-1">📝 Your answer</strong>
+            <img src="{{ w.img_url }}" class="img-fluid border" loading="lazy"
+                 onerror="this.replaceWith(Object.assign(document.createElement('em'),{textContent:'(no image)',className:'text-muted small'}))">
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="border rounded p-1 bg-white">
+            <strong class="d-block small text-success mb-1">✅ Official solution</strong>
+            <img src="{{ w.solution_img_url }}" class="img-fluid border" loading="lazy"
+                 onerror="this.replaceWith(Object.assign(document.createElement('em'),{textContent:'(no solution image)',className:'text-muted small'}))">
+          </div>
+        </div>
+      </div>
+      {% if w.ai_explanation %}
+      <details class="mt-2">
+        <summary class="small text-info" style="cursor:pointer;">🤖 AI explanation</summary>
+        <div class="mt-1 ai-md" data-raw="{{ w.ai_explanation|escape }}"></div>
+      </details>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endfor %}
+
+<script>
+document.querySelectorAll('.ai-md').forEach(el => {
+  const raw = el.dataset.raw || '';
+  if (raw) {
+    window.markedReady.then(() => {
+      window.renderMarkdownInto(el, raw);
+      if (window.renderMathInElement) renderMathIn(el);
+    });
+  }
+});
+
+document.getElementById('copy-email-btn')?.addEventListener('click', async () => {
+  try {
+    const r = await fetch("{% url 'ui:regrade_email_export' cid %}");
+    const text = await r.text();
+    await navigator.clipboard.writeText(text);
+    const b = document.getElementById('copy-email-btn');
+    const old = b.textContent;
+    b.textContent = '✓ copied';
+    setTimeout(() => b.textContent = old, 1500);
+  } catch (e) {
+    alert('Copy failed: ' + e);
+  }
+});
+</script>
+{% endblock %}

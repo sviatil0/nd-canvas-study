@@ -166,6 +166,15 @@ def dump_course(client: CanvasClient, course: dict, base: Path,
     print(f"\n=== {course.get('name')} (id={cid}) → {base} ===", flush=True)
     write_json(base / "course.json", course)
 
+    # Front page (Canvas wiki homepage). Many courses put external links here.
+    try:
+        fp = client.get(f"/api/v1/courses/{cid}/front_page")
+        if fp and fp.get("body"):
+            write_json(base / "front_page.json", fp)
+            write_text(base / "front_page.html", fp.get("body") or "")
+    except Exception as e:
+        print(f"  front_page fetch failed: {e}", flush=True)
+
     seen_files: set[int] = set()  # avoid re-downloading same file referenced from multiple places
 
     # Modules
@@ -285,6 +294,24 @@ def dump_course(client: CanvasClient, course: dict, base: Path,
     except Exception as e:
         prog.asset("pages", "list", None, status="skipped", note=str(e)[:200])
     prog.step_done("pages")
+
+    # Full Files listing — catches files never linked from modules/pages/assignments
+    # (e.g. lecture slides dropped straight into the Files tab).
+    prog.step_start("files")
+    try:
+        all_files = client.list_files(cid)
+        write_json(base / "files.json", all_files)
+        prog.data["steps"]["files"]["total"] = len(all_files)
+        for f in all_files:
+            fid = f.get("id")
+            if not fid:
+                continue
+            seen_files.add(fid)
+            ok = download_file_by_id(client, fid, base / "files", prog, "files_tab")
+            prog.step_inc("files", ok is not None)
+    except Exception as e:
+        prog.asset("files", "list", None, status="skipped", note=str(e)[:200])
+    prog.step_done("files")
 
     # Standalone Assignments
     prog.step_start("assignments")

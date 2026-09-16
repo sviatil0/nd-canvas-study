@@ -16,17 +16,30 @@ from pathlib import Path
 TIMEOUT_SEC = 240
 
 SYSTEM_PROMPT = (
-    "You are an expert statistics tutor for ACMS 30440 at Notre Dame. "
-    "Solve the student's problem step by step. Show every formula used, "
-    "every intermediate calculation, and the final answer with units. "
-    "Cite which course concepts/chapters apply. If the problem is multiple "
-    "choice, identify the correct option and explain why each distractor is wrong. "
-    "Use Markdown with LaTeX for formulas ($...$ inline, $$...$$ block). "
-    "Do NOT call any tools or read files; respond only with the worked solution."
+    "You are an expert statistics tutor for ACMS 30440 at Notre Dame.\n\n"
+    "CRITICAL RULES:\n"
+    "1. Answer ONLY the exact problem inside <problem>...</problem>. Do NOT "
+    "invent or substitute other questions, even if the stem looks incomplete.\n"
+    "2. If the problem is multiple choice (has options A/B/C/D), your final "
+    "answer MUST be one of those letters. Start your response with "
+    "**Answer: X** where X is the chosen letter.\n"
+    "3. If the problem is open-ended, give the numeric/symbolic final answer "
+    "in a **bold** line at the top, then justify below.\n"
+    "4. Show every formula, intermediate step, and units. Use Markdown + "
+    "LaTeX ($...$ inline, $$...$$ block).\n"
+    "5. For each MC distractor, briefly note WHY it is wrong.\n"
+    "6. Do NOT call tools or read external files. Do NOT speculate that the "
+    "problem is incomplete — work with exactly what is given."
 )
 
 
-def _gather_context(course_dir: Path, topic: str | None, max_chars: int = 40000) -> str:
+def _gather_context(course_dir: Path, topic: str | None, max_chars: int = 40000,
+                    query: str | None = None) -> str:
+    """Formula sheet (if the course has one) + vector-retrieved chunks.
+
+    `query` overrides the retrieval text (e.g. the student's actual question);
+    falls back to the topic key. Retrieval prefers in_class chunks but falls
+    back to ALL categories when the course has none (non-stats courses)."""
     parts: list[str] = []
     formulas = course_dir / "modules/final-exam-materials/30440feformulas.pdf"
     if formulas.exists():
@@ -36,16 +49,19 @@ def _gather_context(course_dir: Path, topic: str | None, max_chars: int = 40000)
             parts.append("=== FORMULA SHEET ===\n" + ftxt)
         except Exception:
             pass
-    if topic and (course_dir / "chroma").exists():
+    retrieval_text = query or topic
+    if retrieval_text and (course_dir / "chroma").exists():
         try:
             sys.path.insert(0, str(Path(__file__).parent))
             from vectorize import get_collection
             coll = get_collection(course_dir)
             res = coll.query(
-                query_texts=[topic],
+                query_texts=[retrieval_text],
                 n_results=6,
                 where={"category": "in_class"},
             )
+            if not res["documents"][0]:
+                res = coll.query(query_texts=[retrieval_text], n_results=6)
             for doc, meta in zip(res["documents"][0], res["metadatas"][0]):
                 parts.append(f"=== {meta['source']} p{meta['page']} ===\n{doc}")
         except Exception as e:
@@ -53,16 +69,23 @@ def _gather_context(course_dir: Path, topic: str | None, max_chars: int = 40000)
     return ("\n\n".join(parts))[:max_chars]
 
 
-def _solve_via_gemini(prompt: str) -> dict:
+FAST_MODEL = os.environ.get("GEMINI_FAST_MODEL", "gemini-2.5-flash")
+THINKING_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-pro")
+
+
+def _solve_via_gemini(prompt: str, thinking: bool = False) -> dict:
     sys.path.insert(0, str(Path(__file__).parent))
     from gemini_client import generate
+    model_name = THINKING_MODEL if thinking else FAST_MODEL
     try:
-        text = generate(prompt, system=SYSTEM_PROMPT, max_output_tokens=16384)
+        text = generate(prompt, system=SYSTEM_PROMPT,
+                        max_output_tokens=16384 if thinking else 8192,
+                        model=model_name)
     except Exception as e:
         return {"error": str(e)}
     return {
         "answer": text,
-        "model": os.environ.get("GEMINI_MODEL", "gemini-2.5-pro"),
+        "model": model_name,
         "input_tokens": len(prompt) // 4,
         "output_tokens": len(text) // 4,
         "cache_read": 0,
@@ -90,21 +113,22 @@ def _solve_via_claude(prompt: str) -> dict:
     }
 
 
-def solve(problem_text: str, course_dir: Path, topic: str | None = None) -> dict:
+def solve(problem_text: str, course_dir: Path, topic: str | None = None,
+          thinking: bool = False) -> dict:
     context = _gather_context(course_dir, topic)
     prompt = (
-        f"Topic hint: {topic or 'general'}\n\n"
-        f"--- COURSE REFERENCE (use as needed; do not echo) ---\n"
-        f"{context}\n"
-        f"--- END REFERENCE ---\n\n"
-        f"Problem to solve:\n\n{problem_text}\n\n"
-        f"Walk me through it step by step."
+        f"Topic: {topic or 'general'}\n\n"
+        f"<problem>\n{problem_text}\n</problem>\n\n"
+        f"Reference (formula sheet + selected notes — consult ONLY if a formula "
+        f"is needed; do NOT treat this as the question):\n"
+        f"<reference>\n{context}\n</reference>\n\n"
+        f"Now answer the problem inside <problem>. Remember rules 1-6."
     )
     backend = os.environ.get("USE_BACKEND", "gemini")
     if backend == "claude":
         full_prompt = f"{SYSTEM_PROMPT}\n\n{prompt}"
         return _solve_via_claude(full_prompt)
-    return _solve_via_gemini(prompt)
+    return _solve_via_gemini(prompt, thinking=thinking)
 
 
 if __name__ == "__main__":

@@ -8,12 +8,17 @@
     <h2>{{ info.label|default:topic }}</h2>
     {% if info.ch %}<p class="text-muted">Chapter {{ info.ch }} · key <code>{{ topic }}</code></p>{% endif %}
   </div>
-  <form id="summary-form" method="post" action="{% url 'ui:build_summary' cid topic %}">{% csrf_token %}
-    <button class="btn btn-sm btn-outline-primary" id="summary-btn">
-      <span class="btn-label">{% if have_summary %}Regenerate summary{% else %}Generate summary{% endif %}</span>
-      <span class="spinner-border spinner-border-sm d-none" id="summary-spin" role="status"></span>
-    </button>
-  </form>
+  <div class="d-flex gap-2 align-items-center">
+    {% if have_summary %}
+      <a class="btn btn-sm btn-outline-success" href="{% url 'ui:topic_pdf' cid topic %}" target="_blank" title="Open print-styled view; Cmd+P → Save as PDF">📄 PDF</a>
+    {% endif %}
+    <form id="summary-form" method="post" action="{% url 'ui:build_summary' cid topic %}" class="d-inline">{% csrf_token %}
+      <button class="btn btn-sm btn-outline-primary" id="summary-btn">
+        <span class="btn-label">{% if have_summary %}Regenerate summary{% else %}Generate summary{% endif %}</span>
+        <span class="spinner-border spinner-border-sm d-none" id="summary-spin" role="status"></span>
+      </button>
+    </form>
+  </div>
 </div>
 
 {% if prereqs or dependents %}
@@ -66,7 +71,9 @@
 <div id="selection-toolbar" style="position:absolute; display:none; z-index:1000;" class="btn-group shadow">
   <button class="btn btn-sm btn-primary" id="sel-ask">Ask…</button>
   <button class="btn btn-sm btn-success" id="sel-expand">Add details</button>
+  <button class="btn btn-sm btn-warning" id="sel-grade">Grade my answer</button>
 </div>
+{{ saved_followups|json_script:"followups-data" }}
 
 <script>
 const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.split('=')[1] || '';
@@ -80,7 +87,38 @@ const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.
   window.markedReady.then(() => {
     target.innerHTML = window.marked.parse(raw);
     renderMathIn(target);
+    renderSavedFollowups();
   });
+
+  function renderSavedFollowups() {
+    let items = [];
+    try { items = JSON.parse(document.getElementById('followups-data').textContent); } catch (e) { return; }
+    const esc = (s) => { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; };
+    const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    for (const it of items) {
+      const wrap = document.createElement('div');
+      wrap.className = 'alert alert-light border border-primary mt-2 saved-followup';
+      wrap.style.borderLeftWidth = '4px';
+      const label = it.mode === 'expand' ? 'Added detail' : (it.mode === 'grade' ? 'Graded answer' : 'Q&A');
+      const qlabel = it.mode === 'grade' ? 'My answer' : 'Question';
+      let head = '<div class="small text-muted mb-1">↳ ' + label + ' about: <em>"' +
+                 esc((it.selection || '').slice(0, 80)) + '"</em></div>';
+      if (it.question) head += '<div class="small mb-1"><strong>' + qlabel + ':</strong> ' +
+                               esc((it.question || '').slice(0, 400)) + '</div>';
+      wrap.innerHTML = head;
+      const body = document.createElement('div');
+      body.innerHTML = window.marked ? window.marked.parse(it.answer || '') : esc(it.answer);
+      wrap.appendChild(body);
+      // Anchor: first block whose text contains the start of the selection
+      const needle = norm(it.selection).slice(0, 60);
+      const anchor = needle
+        ? [...target.children].find(b => norm(b.textContent).includes(needle))
+        : null;
+      if (anchor) anchor.insertAdjacentElement('afterend', wrap);
+      else target.appendChild(wrap);
+      renderMathIn(wrap);
+    }
+  }
 
   const tb = document.getElementById('selection-toolbar');
   let lastRange = null;
@@ -180,6 +218,41 @@ const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.
     const q = window.prompt('Your question about the selection:');
     if (q && q.trim()) callFollowup('ask', q.trim());
   });
+
+  function insertAfterSelection(el) {
+    if (lastRange) {
+      let node = lastRange.endContainer;
+      while (node && node.parentNode !== target) node = node.parentNode;
+      if (node && node.parentNode === target) {
+        node.parentNode.insertBefore(el, node.nextSibling);
+        return;
+      }
+    }
+    target.appendChild(el);
+  }
+
+  document.getElementById('sel-grade').addEventListener('click', () => {
+    hideToolbar();
+    const box = document.createElement('div');
+    box.className = 'card mt-2 border-warning';
+    box.innerHTML =
+      '<div class="card-body p-2">' +
+      '<div class="small text-muted mb-1">Paste your answer to the selected question:</div>' +
+      '<textarea class="form-control mb-2" rows="5" placeholder="Your answer…"></textarea>' +
+      '<button class="btn btn-sm btn-warning me-2 grade-go">Grade it</button>' +
+      '<button class="btn btn-sm btn-outline-secondary grade-cancel">Cancel</button>' +
+      '</div>';
+    insertAfterSelection(box);
+    const ta = box.querySelector('textarea');
+    ta.focus();
+    box.querySelector('.grade-cancel').addEventListener('click', () => box.remove());
+    box.querySelector('.grade-go').addEventListener('click', () => {
+      const ans = ta.value.trim();
+      if (!ans) { ta.focus(); return; }
+      box.remove();
+      callFollowup('grade', ans);
+    });
+  });
 })();
 
 // AJAX summary generation with live elapsed counter
@@ -236,6 +309,47 @@ const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.
   });
 })();
 </script>
+
+{% if audio_url %}
+<hr class="my-4">
+<div class="card border-info mb-4">
+  <div class="card-body">
+    <h5 class="card-title">🎧 Listen — exam-prep podcast for this topic</h5>
+    <small class="text-muted d-block mb-2">{{ audio_size_mb }} MB · Gemini Chirp3-HD-Aoede voice · ~5-7 min content. Save to phone for offline review.</small>
+    <audio id="topic-audio" controls preload="none" style="width:100%; max-width:600px;">
+      <source src="{{ audio_url }}" type="audio/mpeg">
+    </audio>
+    <div class="d-flex gap-1 align-items-center mt-2 flex-wrap">
+      <small class="text-muted me-2">Speed:</small>
+      <button class="btn btn-sm btn-outline-secondary speed-btn" data-rate="0.75">0.75×</button>
+      <button class="btn btn-sm btn-outline-secondary speed-btn" data-rate="1">1×</button>
+      <button class="btn btn-sm btn-outline-secondary speed-btn" data-rate="1.25">1.25×</button>
+      <button class="btn btn-sm btn-primary speed-btn" data-rate="1.5">1.5×</button>
+      <button class="btn btn-sm btn-outline-secondary speed-btn" data-rate="1.75">1.75×</button>
+      <button class="btn btn-sm btn-outline-secondary speed-btn" data-rate="2">2×</button>
+      <a class="btn btn-sm btn-outline-primary ms-3" href="{{ audio_url }}" download="{{ topic }}.mp3">⬇ Download MP3</a>
+    </div>
+    <script>
+      (function() {
+        const a = document.getElementById('topic-audio');
+        if (!a) return;
+        a.playbackRate = 1.5;  // default speed
+        document.querySelectorAll('.speed-btn').forEach(b => {
+          b.addEventListener('click', () => {
+            a.playbackRate = parseFloat(b.dataset.rate);
+            document.querySelectorAll('.speed-btn').forEach(x => {
+              x.classList.remove('btn-primary');
+              x.classList.add('btn-outline-secondary');
+            });
+            b.classList.remove('btn-outline-secondary');
+            b.classList.add('btn-primary');
+          });
+        });
+      })();
+    </script>
+  </div>
+</div>
+{% endif %}
 
 {% if materials %}
 <hr class="my-4">
@@ -294,9 +408,30 @@ const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.
 
 <hr class="my-4">
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-  <h3 class="mb-0">Problems from all material</h3>
-  <form method="get" class="d-flex gap-2 align-items-center">
-    <label class="small text-muted mb-0">Sort:</label>
+  <div>
+    <h3 class="mb-0">Problems for this topic</h3>
+    <small class="text-muted">{{ filtered_count }} of {{ all_count }} shown
+      {% if ch_filter == 'default' and expected_ch %} · Ch{{ expected_ch }} + classifier-matched exam Qs{% endif %}
+      {% if ch_filter == 'strict' and expected_ch %} · Ch{{ expected_ch }} folder only{% endif %}
+      {% if ch_filter == 'all' %} · everything in this topic{% endif %}
+      {% if ch_filter != 'default' and ch_filter != 'strict' and ch_filter != 'all' %} · Ch{{ ch_filter }} folder only{% endif %}
+    </small>
+  </div>
+  <form method="get" class="d-flex gap-2 align-items-center flex-wrap">
+    <label class="small text-muted mb-0">Chapter:</label>
+    <select name="ch" class="form-select form-select-sm" onchange="this.form.submit()" style="width:auto;">
+      <option value="default" {% if ch_filter == 'default' %}selected{% endif %}>
+        {% if expected_ch %}Ch{{ expected_ch }} + classifier matches (default){% else %}default{% endif %}
+      </option>
+      {% if expected_ch %}
+      <option value="strict" {% if ch_filter == 'strict' %}selected{% endif %}>Ch{{ expected_ch }} folder only (strict)</option>
+      {% endif %}
+      <option value="all" {% if ch_filter == 'all' %}selected{% endif %}>All in this topic</option>
+      {% for c in chapters_present %}
+        <option value="{{ c }}" {% if ch_filter == c|stringformat:"s" %}selected{% endif %}>Ch{{ c }} folder only</option>
+      {% endfor %}
+    </select>
+    <label class="small text-muted mb-0 ms-2">Sort:</label>
     <select name="sort" class="form-select form-select-sm" onchange="this.form.submit()" style="width:auto;">
       {% for key, label in sort_options %}
         <option value="{{ key }}" {% if key == sort_by %}selected{% endif %}>{{ label }}</option>
@@ -328,7 +463,9 @@ const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.
                  data-key="{{ p.key }}" {% if p.done %}checked{% endif %}
                  title="Mark as solved">
           <span class="badge bg-secondary">#{{ forloop.counter }}</span>
-          {% if p.category == 'practice' %}
+          {% if p.synthetic %}
+            <span class="badge" style="background:#f59e0b;color:#000;" title="AI-generated practice problem (modeled on prof's exam style)">🤖 SYNTH · {{ p.synth_type|default:'practice' }}</span>
+          {% elif p.category == 'practice' %}
             <span class="badge bg-danger" title="From practice exam — high likelihood">practice</span>
           {% elif p.category == 'exams' %}
             <span class="badge bg-warning text-dark" title="From past exam">exam</span>
@@ -358,28 +495,53 @@ const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.
             · p{{ p.page }} · #{{ p.problem }}
           </small>
         </div>
-        <button class="btn btn-sm btn-success solve-btn flex-shrink-0"
-                data-target="a{{ forloop.counter }}"
-                data-problem="{{ p.stem }}"
-                data-topic="{{ topic }}">
-          Solve
-        </button>
+        <div class="d-flex gap-1 flex-shrink-0">
+          <button class="btn btn-sm star-btn {% if p.starred %}btn-warning{% else %}btn-outline-warning{% endif %}"
+                  type="button" title="Save problem"
+                  data-key="{{ p.key }}" data-topic="{{ topic }}"
+                  data-source="{{ p.source }}" data-page="{{ p.page }}"
+                  data-problem-num="{{ p.problem }}" data-stem="{{ p.stem|escape }}"
+                  data-starred="{% if p.starred %}1{% else %}0{% endif %}">
+            <span class="star-icon">{% if p.starred %}⭐{% else %}☆{% endif %}</span>
+          </button>
+          <button class="btn btn-sm btn-success solve-btn"
+                  data-target="a{{ forloop.counter }}"
+                  data-problem="{{ p.full_body|default:p.stem }}"
+                  data-topic="{{ topic }}">
+            Solve
+          </button>
+        </div>
       </div>
     </div>
     <div class="card-body">
-      <details class="mb-2 problem-stem-wrap" data-full-body="{{ p.full_body|default:p.stem|escape }}">
+      <details class="mb-2 problem-stem-wrap" open
+               data-full-body="{{ p.full_body|default:p.stem|escape }}"
+               data-synthetic="{% if p.synthetic %}1{% else %}0{% endif %}">
         <summary class="text-primary" style="cursor:pointer;"><strong>Stem:</strong> {{ p.stem }}…</summary>
         <div class="mt-2 p-3 border rounded problem-full" style="background:#fafaf6; font-size:15px; line-height:1.55;">
           <em class="text-muted">rendering…</em>
         </div>
       </details>
+      {% if p.answer %}
+      <details class="mb-2 problem-answer-wrap"
+               data-answer="{{ p.answer|escape }}"
+               data-synthetic="{% if p.synthetic %}1{% else %}0{% endif %}">
+        <summary class="{% if p.synthetic %}text-warning{% else %}text-success{% endif %}" style="cursor:pointer;">
+          {% if p.synthetic %}<strong>🤖 Show synthetic answer</strong> <small class="text-muted">(AI-generated, verify against material)</small>
+          {% else %}<strong>📖 Show source-key answer</strong> <small class="text-muted">(from solutions PDF)</small>{% endif %}
+        </summary>
+        <div class="mt-2 p-3 border {% if p.synthetic %}border-warning{% else %}border-success{% endif %} rounded problem-answer" style="background:{% if p.synthetic %}#fef9e7{% else %}#eef5f1{% endif %}; font-size:15px; line-height:1.55;">
+          <em class="text-muted">rendering…</em>
+        </div>
+      </details>
+      {% endif %}
       <details class="mb-2">
         <summary class="text-primary" style="cursor:pointer;">Show page snippet</summary>
         <img src="{% url 'ui:snippet' cid p.source p.page %}" class="img-fluid border mt-2" loading="lazy">
       </details>
       <hr>
-      <label class="form-label small text-muted mb-1">Submit your attempt (type, paste image with Ctrl/Cmd-V, or drag-drop):</label>
-      <textarea class="form-control mb-2 attempt" rows="3" placeholder="$F = MSTr/MSE = ...$"></textarea>
+      <label class="form-label small text-muted mb-1">Submit your attempt (type, paste image with Ctrl/Cmd-V, or drag-drop) <span class="attempt-saved-badge text-success small d-none">✓ saved</span>:</label>
+      <textarea class="form-control mb-2 attempt" rows="3" placeholder="$F = MSTr/MSE = ...$">{{ p.saved_attempt }}</textarea>
       <div class="d-flex gap-2 align-items-center mb-2 flex-wrap">
         <label class="btn btn-sm btn-outline-secondary mb-0">
           📎 Add image(s)
@@ -388,13 +550,21 @@ const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.
         <small class="text-muted img-count">no images</small>
       </div>
       <div class="img-thumbs d-flex gap-2 flex-wrap mb-2"></div>
-      <div class="d-flex gap-2 mt-2">
+      <div class="d-flex gap-2 mt-2 align-items-center flex-wrap">
         <button class="btn btn-sm btn-success grade-btn"
                 data-target="a{{ forloop.counter }}"
-                data-problem="{{ p.stem }}"
+                data-problem="{{ p.full_body|default:p.stem }}"
                 data-topic="{{ topic }}">Grade my answer</button>
+        <div class="form-check form-switch ms-2 mb-0">
+          <input class="form-check-input thinking-toggle" type="checkbox"
+                 id="think-{{ forloop.counter }}" title="Use Gemini 2.5 Pro (slower, deeper reasoning)">
+          <label class="form-check-label small text-muted" for="think-{{ forloop.counter }}">🧠 thinking (Pro)</label>
+        </div>
       </div>
-      <div id="a{{ forloop.counter }}" class="mt-3"></div>
+      <div id="a{{ forloop.counter }}" class="mt-3"
+           data-saved-solve="{{ p.saved_solve|escape }}"
+           data-saved-grade="{{ p.saved_grade|escape }}"
+           data-problem="{{ p.full_body|default:p.stem|escape }}"></div>
     </div>
   </div>
 {% endfor %}
@@ -408,7 +578,7 @@ function setStatus(target, kind, text) {
   target.appendChild(box);
 }
 
-function setAnswer(target, data) {
+function setAnswer(target, data, problemText) {
   target.replaceChildren();
   const wrap = document.createElement('div');
   wrap.className = 'alert alert-light';
@@ -428,15 +598,143 @@ function setAnswer(target, data) {
   wrap.appendChild(body);
   const meta = document.createElement('div');
   meta.className = 'text-muted small mt-2';
-  meta.textContent = 'in=' + data.input_tokens + ' out=' + data.output_tokens
+  meta.textContent = 'in=' + (data.input_tokens || 0) + ' out=' + (data.output_tokens || 0)
                    + ' cache_read=' + (data.cache_read || 0);
   wrap.appendChild(meta);
+  // Follow-up form
+  attachFollowupForm(wrap, problemText || '', data.answer || '');
   target.appendChild(wrap);
   if (window.renderMathInElement) renderMathIn(body);
 }
 
+function attachFollowupForm(parentWrap, problemText, priorAnswer) {
+  const card = parentWrap.closest('.problem-card');
+  const sep = document.createElement('hr');
+  sep.className = 'my-2';
+  parentWrap.appendChild(sep);
+  const row = document.createElement('div');
+  row.className = 'd-flex gap-2 align-items-stretch flex-wrap';
+  const ta = document.createElement('textarea');
+  ta.className = 'form-control form-control-sm flex-grow-1';
+  ta.rows = 1;
+  ta.placeholder = '💬 Ask follow-up about this answer (e.g. "why divide by n-1?", "show alternative approach")';
+  ta.style.minWidth = '300px';
+  const askBtn = document.createElement('button');
+  askBtn.type = 'button';
+  askBtn.className = 'btn btn-sm btn-outline-primary';
+  askBtn.textContent = 'Ask follow-up';
+  row.appendChild(ta);
+  row.appendChild(askBtn);
+  parentWrap.appendChild(row);
+  const out = document.createElement('div');
+  out.className = 'mt-2 followup-thread';
+  parentWrap.appendChild(out);
+
+  let history = priorAnswer;
+
+  async function send() {
+    const q = ta.value.trim();
+    if (!q) return;
+    askBtn.disabled = true;
+    ta.disabled = true;
+    const thinking = card?.querySelector('.thinking-toggle')?.checked ? '1' : '';
+    const placeholder = document.createElement('div');
+    placeholder.className = 'alert alert-info';
+    placeholder.textContent = (thinking ? '🧠 ' : '⚡ ') + 'Asking follow-up…';
+    out.appendChild(placeholder);
+    const fd = new FormData();
+    fd.append('problem', problemText);
+    fd.append('prior_answer', history);
+    fd.append('question', q);
+    fd.append('topic', TOPIC_KEY);
+    if (thinking) fd.append('thinking', '1');
+    try {
+      const r = await fetch("{% url 'ui:solution_followup' cid %}", {
+        method: 'POST', headers: {'X-CSRFToken': csrf}, body: fd,
+      });
+      const data = await r.json();
+      placeholder.remove();
+      const block = document.createElement('div');
+      block.className = 'alert alert-light border-start border-4 border-primary';
+      const qLine = document.createElement('div');
+      qLine.className = 'small text-muted mb-1';
+      qLine.innerHTML = '↳ <strong>You:</strong> ';
+      qLine.append(document.createTextNode(q));
+      block.appendChild(qLine);
+      if (data.error) {
+        const err = document.createElement('div');
+        err.className = 'text-danger';
+        err.textContent = 'Error: ' + data.error;
+        block.appendChild(err);
+      } else {
+        const ansBody = document.createElement('div');
+        ansBody.className = 'mt-2';
+        window.renderMarkdownInto(ansBody, data.answer || '');
+        block.appendChild(ansBody);
+        const m = document.createElement('div');
+        m.className = 'small text-muted mt-1';
+        m.textContent = '— ' + (data.model || '');
+        block.appendChild(m);
+        history += '\n\n[FOLLOWUP Q]: ' + q + '\n[FOLLOWUP A]: ' + (data.answer || '');
+        if (window.renderMathInElement) renderMathIn(ansBody);
+      }
+      out.appendChild(block);
+      ta.value = '';
+    } catch (e) {
+      placeholder.remove();
+      const err = document.createElement('div');
+      err.className = 'alert alert-danger';
+      err.textContent = 'Request failed: ' + e;
+      out.appendChild(err);
+    } finally {
+      askBtn.disabled = false;
+      ta.disabled = false;
+      ta.focus();
+    }
+  }
+
+  askBtn.addEventListener('click', send);
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); }
+  });
+}
+
 const TOPIC_KEY = "{{ topic }}";
 const TOTAL_PROBLEMS = {{ total_count }};
+const ATTEMPT_SAVE_URL = "{% url 'ui:save_attempt' cid %}";
+
+async function saveField(key, fields) {
+  const fd = new FormData();
+  fd.append('key', key);
+  for (const [k, v] of Object.entries(fields)) fd.append(k, v ?? '');
+  try {
+    await fetch(ATTEMPT_SAVE_URL, {
+      method: 'POST', headers: {'X-CSRFToken': csrf}, body: fd,
+    });
+  } catch (e) { /* network errors silent — local state still intact */ }
+}
+
+function debounce(fn, ms) {
+  let t = null;
+  return (...args) => {
+    if (t) clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  };
+}
+
+// Restore saved Solve / Grade outputs at page load
+document.querySelectorAll('[data-saved-solve], [data-saved-grade]').forEach(target => {
+  const savedSolve = target.dataset.savedSolve || '';
+  const savedGrade = target.dataset.savedGrade || '';
+  const problem = target.dataset.problem || '';
+  if (savedSolve) {
+    setAnswer(target, {model: 'restored (Solve)', answer: savedSolve,
+                       input_tokens: 0, output_tokens: 0, cache_read: 0}, problem);
+  } else if (savedGrade) {
+    setAnswer(target, {model: 'restored (Grade)', answer: savedGrade,
+                       input_tokens: 0, output_tokens: 0, cache_read: 0}, problem);
+  }
+});
 
 async function toggleDone(key, state) {
   const fd = new FormData();
@@ -514,6 +812,18 @@ document.querySelectorAll('.problem-card').forEach(card => {
   const ta = card.querySelector('.attempt');
   const fileInput = card.querySelector('.img-input');
   if (!ta || !fileInput) return;
+  // Auto-save typed attempts
+  const cardKey = card.dataset.key;
+  const savedBadge = card.querySelector('.attempt-saved-badge');
+  const persistAttempt = debounce(async () => {
+    await saveField(cardKey, {attempt: ta.value});
+    if (savedBadge) {
+      savedBadge.classList.remove('d-none');
+      setTimeout(() => savedBadge.classList.add('d-none'), 1500);
+    }
+  }, 600);
+  ta.addEventListener('input', persistAttempt);
+  ta.addEventListener('blur', persistAttempt);
   fileInput.addEventListener('change', () => {
     const imgs = getImgs(card);
     Array.from(fileInput.files).forEach(f => imgs.push(f));
@@ -554,12 +864,15 @@ document.querySelectorAll('.grade-btn').forEach(btn => {
       setStatus(target, 'warning', 'Type your attempt or attach an image first.');
       return;
     }
-    setStatus(target, 'info', imgs.length ? `Grading… (analyzing ${imgs.length} image(s))` : 'Grading…');
+    const thinking = card.querySelector('.thinking-toggle')?.checked ? '1' : '';
+    setStatus(target, 'info', (thinking ? '🧠 Thinking… ' : '⚡ ') +
+              (imgs.length ? `Grading ${imgs.length} image(s)` : 'Grading'));
     btn.disabled = true;
     const fd = new FormData();
     fd.append('problem', btn.dataset.problem);
     fd.append('topic', btn.dataset.topic);
     fd.append('attempt', attempt);
+    if (thinking) fd.append('thinking', '1');
     imgs.forEach(f => fd.append('image', f, f.name || 'paste.png'));
     try {
       const r = await fetch("{% url 'ui:grade_answer' cid %}", {
@@ -567,32 +880,40 @@ document.querySelectorAll('.grade-btn').forEach(btn => {
       });
       const data = await r.json();
       if (data.error) setStatus(target, 'danger', data.error);
-      else setAnswer(target, {model: 'gemini-2.5-pro', answer: data.feedback, input_tokens: 0, output_tokens: 0, cache_read: 0});
+      else {
+        setAnswer(target, {model: data.model || 'gemini', answer: data.feedback, input_tokens: 0, output_tokens: 0, cache_read: 0}, btn.dataset.problem);
+        const k = card.dataset.key;
+        if (k) saveField(k, {grade: data.feedback || '', solve: ''});
+      }
     } catch (e) { setStatus(target, 'danger', String(e)); }
     finally { btn.disabled = false; }
   });
 });
 
 // --- Pretty-print problem full body when expanded ---
-function formatProblemBody(raw) {
+function formatProblemBody(raw, isSynthetic) {
+  // Synthetic problems are already well-formatted markdown — preserve newlines,
+  // code fences, and tables. Only split off the answer for separate rendering.
+  if (isSynthetic) {
+    // Strip the answer portion — rendered behind a toggle
+    return raw.split(/\*\*Answer \(synthetic\):\*\*/i)[0].trim();
+  }
   let body = raw.replace(/\s+/g, ' ').trim();
-  // Replace LaTeX \quad-separated number lists with plain spaced numbers
-  // (these are data sets, not display math)
   body = body.replace(/\$\$([\d.\s\\quad]+)\$\$/g, (_m, inner) => {
     return inner.replace(/\\quad/g, '  ').replace(/\s+/g, ' ').trim();
   });
-  // Same for $...$ inline if it's just numbers
   body = body.replace(/\$([\d.\s\\quad]+)\$/g, (_m, inner) => {
     return inner.replace(/\\quad/g, '  ').replace(/\s+/g, ' ').trim();
   });
-  // MC choices on separate lines
   body = body.replace(/\s([A-E])\.\s+(?=[A-Z0-9])/g, '\n- **$1.** ');
-  // Subparts (a)/(b)/(c)
   body = body.replace(/\s\(([a-h])\)\s+/g, '\n- **($1)** ');
-  // Stem prefix bold
   body = body.replace(/^(\d+)\.\s+\(?(\d+\s*points?)?\)?\s*/i,
                       (_m, num, pts) => `**${num}.**${pts ? '  *(' + pts + ')*' : ''}  `);
   return body;
+}
+function extractSyntheticAnswer(raw) {
+  const m = raw.match(/\*\*Answer \(synthetic\):\*\*([\s\S]*)/i);
+  return m ? m[1].trim() : '';
 }
 document.querySelectorAll('.problem-stem-wrap').forEach(det => {
   det.addEventListener('toggle', () => {
@@ -601,7 +922,24 @@ document.querySelectorAll('.problem-stem-wrap').forEach(det => {
     if (target.dataset.rendered) return;
     target.dataset.rendered = '1';
     const raw = det.dataset.fullBody || '';
-    const md = formatProblemBody(raw);
+    const isSynth = det.dataset.synthetic === '1';
+    const md = formatProblemBody(raw, isSynth);
+    window.markedReady.then(() => {
+      window.renderMarkdownInto(target, md);
+      if (window.renderMathInElement) renderMathIn(target);
+    });
+  });
+});
+
+document.querySelectorAll('.problem-answer-wrap').forEach(det => {
+  det.addEventListener('toggle', () => {
+    if (!det.open) return;
+    const target = det.querySelector('.problem-answer');
+    if (target.dataset.rendered) return;
+    target.dataset.rendered = '1';
+    const raw = det.dataset.answer || '';
+    const isSynth = det.dataset.synthetic === '1';
+    const md = formatProblemBody(raw, isSynth);
     window.markedReady.then(() => {
       window.renderMarkdownInto(target, md);
       if (window.renderMathInElement) renderMathIn(target);
@@ -857,21 +1195,58 @@ document.getElementById('mat-ask')?.addEventListener('click', () => {
   if (q && q.trim()) matFollowup('ask', q.trim());
 });
 
+// Star/save problem
+document.querySelectorAll('.star-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const starred = btn.dataset.starred === '1';
+    const newState = starred ? '0' : '1';
+    btn.disabled = true;
+    const fd = new FormData();
+    fd.append('key', btn.dataset.key);
+    fd.append('state', newState);
+    fd.append('topic', btn.dataset.topic);
+    fd.append('source', btn.dataset.source);
+    fd.append('page', btn.dataset.page);
+    fd.append('problem', btn.dataset.problemNum);
+    fd.append('stem', btn.dataset.stem);
+    try {
+      const r = await fetch("{% url 'ui:save_toggle' cid %}", {
+        method: 'POST', headers: {'X-CSRFToken': csrf}, body: fd,
+      });
+      const data = await r.json();
+      if (data.ok) {
+        btn.dataset.starred = newState;
+        btn.querySelector('.star-icon').textContent = newState === '1' ? '⭐' : '☆';
+        btn.classList.toggle('btn-warning', newState === '1');
+        btn.classList.toggle('btn-outline-warning', newState === '0');
+      }
+    } catch (e) { /* swallow */ }
+    finally { btn.disabled = false; }
+  });
+});
+
 document.querySelectorAll('.solve-btn').forEach(btn => {
   btn.addEventListener('click', async () => {
     const target = document.getElementById(btn.dataset.target);
-    setStatus(target, 'info', 'Solving…');
+    const card = btn.closest('.problem-card');
+    const thinking = card?.querySelector('.thinking-toggle')?.checked ? '1' : '';
+    setStatus(target, 'info', thinking ? '🧠 Thinking with Gemini 2.5 Pro…' : '⚡ Solving with Gemini 2.5 Flash…');
     btn.disabled = true;
     const fd = new FormData();
     fd.append('problem', btn.dataset.problem);
     fd.append('topic', btn.dataset.topic);
+    if (thinking) fd.append('thinking', '1');
     try {
       const r = await fetch("{% url 'ui:solve_problem' cid %}", {
         method: 'POST', headers: {'X-CSRFToken': csrf}, body: fd,
       });
       const data = await r.json();
       if (data.error) setStatus(target, 'danger', 'Error: ' + data.error);
-      else setAnswer(target, data);
+      else {
+        setAnswer(target, data, btn.dataset.problem);
+        const k = card?.dataset.key;
+        if (k) saveField(k, {solve: data.answer || '', grade: ''});
+      }
     } catch (e) {
       setStatus(target, 'danger', 'Request failed: ' + e);
     } finally {

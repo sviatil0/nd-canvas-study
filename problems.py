@@ -18,7 +18,7 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
-from analyze import TOPICS
+from analyze import TOPICS, detect_course_id, topics_for_course
 
 PROBLEM_HEAD = re.compile(
     r"^\s*(?:problem|question|q|exercise|ex|#)?\s*(\d{1,2})[.\):]\s+",
@@ -66,6 +66,41 @@ CHAPTER_TO_TOPIC: dict[int, list[str]] = {
 }
 
 
+# Strong tokens — if present in body, force this topic regardless of file
+# location. Order matters: first match wins. More specific patterns first.
+STRONG_TOPIC_PATTERNS: list[tuple[str, str]] = [
+    (r"\bANOVA\b|\bMSTr\b|\bMSE\b|\bF\s*=\s*MS|sum of squares|treatment\s+mean", "anova"),
+    (r"\bmultiple\s+(linear\s+)?regression\b|\bindicator\s+variable|interaction\s+term|adjusted\s+R\b|R\^?2|\bVIF\b", "regression_multiple"),
+    (r"\bregression\b|least.squares|slope\s+intercept|\br\s*=\s*[-0-9]|\bcorrelation\s+coefficient\b|\bbeta_?[01]|\b\\hat\{?y\}?", "regression_simple"),
+    (r"\bchi.squared?\b|\bchi-square|goodness.of.fit|contingency\s+table|expected\s+counts?", "chi_squared"),
+    (r"\b(Wilcoxon|Mann.Whitney|Kruskal|sign\s+test|rank\s+sum)\b", "nonparametric"),
+    (r"\bcategorical\s+data\b|two.way\s+table", "categorical_data"),
+    (r"\b(paired|matched).*(t.test|t\s+statistic)|two[- ]sample\s+t|pooled\s+variance|two\s+population", "two_sample"),
+    (r"\b(t.test|t\s+statistic|t\s+distribution|degrees of freedom)\b", "t_test"),
+    (r"\b(z.test|z\s+statistic|z\s+score)\b", "z_test"),
+    (r"\bnull hypothesis\b|\balternative hypothesis\b|\bp.value\b|\breject\s+H_?0|\bH_?0\b\s*:|\btype\s+I\s+error", "hypothesis_testing"),
+    (r"\bconfidence\s+interval\b|\bCI\b\s*for|margin\s+of\s+error|\b95%\b|\b99%\b\s*(confidence|interval)", "confidence_intervals"),
+    (r"\bsampling\s+distribution\b|central\s+limit\s+theorem|\bCLT\b|\bsample\s+mean\b\s*\\?bar", "sampling_distributions"),
+    (r"\b(point\s+estimat|MLE|maximum\s+likelihood|method\s+of\s+moments|unbiased\s+estimator)\b", "point_estimation"),
+    (r"\b(joint\s+(pdf|pmf|distribution|density)|marginal\s+(pdf|pmf|distribution)|covariance|Cov\(|conditional\s+density)\b", "joint_distributions"),
+    (r"\b(Poisson|binomial|geometric|hypergeometric|Bernoulli|negative\s+binomial)\b", "discrete_distributions"),
+    (r"\b(normal\s+distribution|gaussian|exponential\s+distribution|Weibull|lognormal|gamma\s+distribution|beta\s+distribution|uniform\s+distribution)\b", "continuous_distributions"),
+    (r"\bE\s*[\(\[]\s*X\s*[\)\]]|\bexpected\s+value\b|\bE\s*\(\s*X\^2\s*\)|\bvariance\s+of\s+X\b", "expected_value"),
+    (r"\bP\s*\(\s*[A-Z]\s*\|\s*[A-Z]\s*\)|\bconditional\s+probability\b|\bBayes", "conditional_probability"),
+    (r"\b(independent\s+events|are\s+independent|mutually\s+independent)\b", "independence"),
+    (r"\bsample\s+space\b|\bmutually\s+exclusive\b|\bcomplement\b|\bunion\b|\bintersection\b", "probability_basics"),
+    (r"\b(stem.{0,3}leaf|histogram|boxplot|five.number\s+summary|quartile|IQR|standard\s+deviation\s+formula)\b", "descriptive_statistics"),
+]
+STRONG_COMPILED = [(re.compile(p, re.I), t) for p, t in STRONG_TOPIC_PATTERNS]
+
+
+def strong_topic_match(body: str) -> str | None:
+    for rx, topic in STRONG_COMPILED:
+        if rx.search(body):
+            return topic
+    return None
+
+
 def chapter_from_path(rel_path: str) -> int | None:
     m = re.search(r"chapter[s]?-(\d+)(?!\d)", rel_path.lower())
     return int(m.group(1)) if m else None
@@ -81,36 +116,99 @@ def chapters_from_filename(rel_path: str) -> list[int]:
 
 
 def classify_with_chapter_bias(body: str, rel_path: str) -> str | None:
-    """Classify, but only consider topics whose chapter matches the file's chapter when available."""
+    """Classify, with body-keyword override for unconstrained PDFs."""
     hits = topic_hits(body)
-    if not hits:
-        return None
-    # Multi-chapter filename (e.g. 'chapters-10-12-13-14') restricts allowed
-    # topics to UNION of those chapters.
+    strong = strong_topic_match(body)
     multi = chapters_from_filename(rel_path)
+    ch = chapter_from_path(rel_path)
+    # Multi-chapter filename: constrain to union; prefer strong match within set.
     if multi:
         allowed = set()
         for c in multi:
             allowed.update(CHAPTER_TO_TOPIC.get(c, []))
+        if strong and strong in allowed:
+            return strong
+        if not hits:
+            return strong
         constrained = {t: c for t, c in hits.items() if t in allowed}
         if constrained:
             return max(constrained, key=constrained.get)
-        return max(hits, key=hits.get)
-    ch = chapter_from_path(rel_path)
-    if ch is None:
-        return max(hits, key=hits.get)
-    allowed = set(CHAPTER_TO_TOPIC.get(ch, []))
-    if not allowed:
-        return max(hits, key=hits.get)
-    constrained = {t: c for t, c in hits.items() if t in allowed}
-    if constrained:
-        return max(constrained, key=constrained.get)
+        return strong or max(hits, key=hits.get)
+    # Single-chapter folder: chapter constraint usually correct, but allow
+    # strong override IF strong topic is in same chapter group.
+    if ch is not None:
+        allowed = set(CHAPTER_TO_TOPIC.get(ch, []))
+        if strong and strong in allowed:
+            return strong
+        if not allowed:
+            return strong or (max(hits, key=hits.get) if hits else None)
+        if not hits:
+            return strong if strong in allowed else None
+        constrained = {t: c for t, c in hits.items() if t in allowed}
+        if constrained:
+            return max(constrained, key=constrained.get)
+        return strong or max(hits, key=hits.get)
+    # No chapter info: strong body match wins, then global token-max.
+    if strong:
+        return strong
+    if not hits:
+        return None
     return max(hits, key=hits.get)
 
 
 def is_logistics_file(rel_path: str) -> bool:
     name = rel_path.lower()
     return any(h in name for h in LOGISTICS_FILE_HINTS)
+
+
+_DATA_LATEX_RE = re.compile(r"\$\$?\s*[\d.\s\\quad\-]+\s*\$\$?")
+_PAGE_MARKER_RE = re.compile(r"---\s*page\s+\d+\s*---", re.I)
+
+# Solution-tail markers — once seen, everything after is the worked answer.
+_SOLUTION_MARKERS = re.compile(
+    r"(?:"
+    r"\\boxed\{[^}]+\}"
+    r"|\bSolution\s*[:.]"
+    r"|\bAnswer\s*[:.]"
+    r"|\bAns\s*[:.]"
+    r"|\bSoln\s*[:.]"
+    r")",
+    re.I,
+)
+# Detect end of MC choice block: a line starting with last option letter D/E,
+# then math/computation following.
+_MC_LINE = re.compile(r"^\s*\(?[A-E]\)?\.\s+", re.M)
+
+
+def clean_stem(text: str) -> str:
+    """Strip OCR artifacts that render badly in the UI."""
+    text = _PAGE_MARKER_RE.sub(" ", text)
+    text = _DATA_LATEX_RE.sub(lambda m: " " + re.sub(r"\\quad", "  ", m.group(0).strip("$")).strip() + " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def split_question_answer(body: str) -> tuple[str, str | None]:
+    """Split solution-document body into (question_stem, worked_answer).
+
+    HIGH-CONFIDENCE ONLY. We previously used heuristic 'equation-after-MC'
+    detection which produced false positives (next problem's preamble or
+    unrelated math got tagged as 'the answer'). Now we ONLY split when:
+
+    - Explicit marker present: `Solution:`, `Answer:`, `Soln:`, `Ans:`,
+      `\\boxed{...}` near the END (not embedded in a data string).
+
+    Anything else → no answer extracted, no green toggle shown. Better to
+    show the question alone than to mislead the student with wrong "key".
+    """
+    m = _SOLUTION_MARKERS.search(body)
+    if not m:
+        return body, None
+    # Reject if marker is in first 30 chars (likely matched the question stem
+    # itself, e.g. "1. Answer the following...").
+    if m.start() < 30:
+        return body, None
+    return body[:m.start()].rstrip(), body[m.start():].strip()
 
 
 def looks_like_problem(stem: str) -> bool:
@@ -131,32 +229,85 @@ def topic_hits(text: str) -> dict[str, int]:
     return out
 
 
-def split_problems(text: str) -> list[tuple[int, str]]:
-    """Split a PDF text dump into (problem_num, body) tuples."""
+_PREAMBLE_RE = re.compile(
+    r"(?:assume|use|consider|refer\s+to)\b[^.\n]{0,80}?\b(?:question|problem)s?\s+"
+    r"(\d{1,2})\s*(?:-|–|—|to|through|thru)\s*(\d{1,2})",
+    re.I,
+)
+
+
+def extract_preambles(text: str) -> list[tuple[int, int, str, int, int]]:
+    """Find 'Assume the following for questions N-M:' blocks.
+
+    Returns list of (lo, hi, preamble_text, region_start, region_end).
+    region_end approximates end of the last problem in the range; preamble
+    only applies to bodies whose offset falls inside [region_start, region_end].
+    """
+    out = []
+    for m in _PREAMBLE_RE.finditer(text):
+        try:
+            n_lo, n_hi = int(m.group(1)), int(m.group(2))
+        except ValueError:
+            continue
+        if n_hi < n_lo or n_hi - n_lo > 12:
+            continue
+        tail_start = m.end()
+        next_q = re.search(r"\n\s*\d{1,2}[.\):]\s+", text[tail_start:])
+        body_end = tail_start + next_q.start() if next_q else tail_start + 600
+        pre_text = text[m.start():body_end].strip()
+        # Region end: walk forward looking for problem-head numbered (n_hi + 1)
+        # or, if not found, cap at +8000 chars from preamble start.
+        end_pat = re.compile(rf"\n\s*{n_hi + 1}[.\):]\s+")
+        em = end_pat.search(text, m.end())
+        region_end = em.start() if em else min(len(text), m.start() + 8000)
+        out.append((n_lo, n_hi, pre_text, m.start(), region_end))
+    return out
+
+
+def find_preamble_for(num: int, body_offset: int,
+                      preambles: list[tuple[int, int, str, int, int]]) -> str | None:
+    for lo, hi, txt, r_start, r_end in preambles:
+        if lo <= num <= hi and r_start <= body_offset < r_end:
+            return txt
+    return None
+
+
+def split_problems(text: str) -> list[tuple[int, str, int]]:
+    """Split a PDF text dump into (problem_num, body, body_offset) tuples.
+
+    Boundaries: next numbered problem head OR start of a preamble block
+    ('Assume the following for questions N-M:'). Without the preamble
+    boundary, a preamble at the END of one problem leaks into the next.
+    """
     matches = list(PROBLEM_HEAD.finditer(text))
     if not matches:
-        # Try loose pattern (any-line numbered)
         matches = list(PROBLEM_HEAD_LOOSE.finditer(text))
     if not matches:
-        return [(1, text)]
+        return [(1, text, 0)]
+    preamble_starts = [m.start() for m in _PREAMBLE_RE.finditer(text)]
     problems = []
     for i, m in enumerate(matches):
         num = int(m.group(1))
         start = m.start()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        next_q = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        # Earliest boundary after start: next problem head OR next preamble.
+        next_pre = next((p for p in preamble_starts if p > start), len(text))
+        end = min(next_q, next_pre)
         body = text[start:end].strip()
         if 30 < len(body) < 6000:
-            problems.append((num, body))
+            problems.append((num, body, start))
     return problems
 
 
-def split_pages_as_problems(pages: list[str]) -> list[tuple[int, str]]:
+def split_pages_as_problems(pages: list[str]) -> list[tuple[int, str, int]]:
     """Fallback: treat each page as one problem (for handwritten/scan-only PDFs)."""
     out = []
+    offset = 0
     for i, p in enumerate(pages):
         body = p.strip()
         if 60 < len(body) < 6000:
-            out.append((i + 1, body))
+            out.append((i + 1, body, offset))
+        offset += len(p) + 1
     return out
 
 
@@ -241,29 +392,70 @@ def difficulty_score(stem: str, body_len: int = 0) -> tuple[int, str]:
     return score, label
 
 
-def likelihood_score(category: str, source: str, chapter: int | None) -> float:
+def formula_topic_weights(course_dir: Path) -> dict[str, float]:
+    """Score topics by how heavily they appear in the formula sheet.
+
+    Strong signal that the prof expects students to USE that topic on the
+    exam (the formula sheet is curated for the exam). Returns {topic: 0..1}
+    where weight = topic_hits / max_topic_hits.
+    """
+    weights: dict[str, float] = {t: 0.0 for t in TOPICS}
+    candidates = list(course_dir.glob("modules/**/*formulas*.pdf"))
+    if not candidates:
+        return weights
+    text_all = ""
+    for p in candidates:
+        ocr = course_dir / "_ocr" / (str(p.relative_to(course_dir)).replace("/", "__") + ".txt")
+        if ocr.exists():
+            text_all += "\n" + ocr.read_text()
+        else:
+            try:
+                text_all += "\n" + "\n".join((pg.extract_text() or "") for pg in PdfReader(str(p)).pages)
+            except Exception:
+                pass
+    if not text_all.strip():
+        return weights
+    hits = topic_hits(text_all)
+    if not hits:
+        return weights
+    max_h = max(hits.values())
+    for t, n in hits.items():
+        weights[t] = n / max_h
+    return weights
+
+
+def likelihood_score(category: str, source: str, chapter: int | None,
+                     topic: str | None = None,
+                     formula_weights: dict[str, float] | None = None) -> float:
     """Probability proxy of appearing on the final exam. 0-100."""
     score = 0.0
     score += SOURCE_WEIGHTS.get(category, 0) * 10  # up to 50
     src = source.lower()
-    # Practice problems for the final are gold
     if "extra-practice" in src or "practice" in src:
         score += 30
     if "final" in src:
         score += 25
     if "e1" in src or "e2" in src or "exam-1" in src or "exam-2" in src:
         score += 15
-    # Later chapters tend to be over-represented in finals
     if chapter and chapter >= 10:
         score += 10
     elif chapter and chapter >= 6:
         score += 5
+    # Formula-sheet boost: heaviest topic gets +25, scaled linearly.
+    if topic and formula_weights:
+        score += formula_weights.get(topic, 0.0) * 25
     return round(score, 1)
 
 
 def build_study_plan(course_dir: Path) -> None:
+    global TOPICS
+    TOPICS = topics_for_course(detect_course_id(course_dir) or 0)
     grouped = collect_pdfs(course_dir)
     prep_pdfs = [p for cat in PREP_CATEGORIES for p in grouped.get(cat, [])]
+    fweights = formula_topic_weights(course_dir)
+    if fweights:
+        top5 = sorted(fweights.items(), key=lambda kv: -kv[1])[:5]
+        print("formula-sheet topic weights (top 5):", top5)
 
     prep_index: dict[str, list[str]] = defaultdict(list)
     for p in prep_pdfs:
@@ -291,12 +483,19 @@ def build_study_plan(course_dir: Path) -> None:
             if len(splits) <= 1 and len(pages) > 1:
                 splits = split_pages_as_problems(pages)
 
-            for num, body in splits:
+            preambles = extract_preambles(joined)
+
+            for num, body, body_offset in splits:
+                pre = find_preamble_for(num, body_offset, preambles)
+                if pre and pre not in body:
+                    body = pre + "\n\n" + body
                 topic = classify_with_chapter_bias(body, rel)
                 if not topic:
                     continue
-                full_body = re.sub(r"\s+", " ", body).strip()
-                stem = full_body[:320]
+                q_part, ans_part = split_question_answer(body)
+                full_body = clean_stem(q_part)
+                answer_md = clean_stem(ans_part) if ans_part else None
+                stem = full_body[:280]
                 if not looks_like_problem(stem):
                     continue
                 offset = joined.find(body[:60]) if body else -1
@@ -306,7 +505,8 @@ def build_study_plan(course_dir: Path) -> None:
                 ) if offset >= 0 else num
                 ch = chapter_from_path(rel)
                 d_score, d_label = difficulty_score(stem, len(body))
-                like = likelihood_score(cat, rel, ch)
+                like = likelihood_score(cat, rel, ch, topic=topic,
+                                        formula_weights=fweights)
                 by_topic[topic].append({
                     "source": rel,
                     "category": cat,
@@ -315,11 +515,49 @@ def build_study_plan(course_dir: Path) -> None:
                     "problem": num,
                     "stem": stem,
                     "full_body": full_body,
+                    "answer": answer_md,
                     "chapter": ch,
                     "difficulty": d_score,
                     "difficulty_label": d_label,
                     "likelihood": like,
                 })
+
+    # Dedup: same PDF reachable through multiple paths (e.g.
+    # exam-1-materials/X.pdf and final-exam-materials/pages/_attachments/X.pdf)
+    # produces identical problems. Key on (basename, problem_num, stem-prefix).
+    # Prefer the shorter path / non-aggregator path.
+    def _norm_base(src: str) -> str:
+        """Treat 'foo-solutions.pdf' and 'foo.pdf' as same logical exam."""
+        b = Path(src).name.lower()
+        b = re.sub(r"-(solutions?|key|answers?)\.pdf$", ".pdf", b)
+        return b
+
+    def _dedup_priority(rec: dict) -> tuple:
+        src = rec["source"]
+        agg_penalty = 0
+        if "/pages/_attachments/" in src:
+            agg_penalty += 3
+        if "final-exam-materials" in src and ("e1-" in src or "e2-" in src):
+            agg_penalty += 2
+        # Prefer record WITH answer over one without (for same logical Q).
+        no_answer_penalty = 0 if rec.get("answer") else 1
+        return (no_answer_penalty, agg_penalty, len(src), src)
+
+    def _stem_fingerprint(s: str) -> str:
+        # Strip LaTeX delimiters + punctuation + collapse whitespace; keep
+        # alphanumerics so OCR variations like '$X$' vs 'X' collapse.
+        s = re.sub(r"[^a-z0-9 ]+", "", s.lower())
+        s = re.sub(r"\s+", " ", s).strip()
+        return s[:60]
+
+    for t, recs in by_topic.items():
+        seen: dict[tuple, dict] = {}
+        for r in recs:
+            key = (_norm_base(r["source"]), r["problem"], _stem_fingerprint(r["stem"]))
+            cur = seen.get(key)
+            if cur is None or _dedup_priority(r) < _dedup_priority(cur):
+                seen[key] = r
+        by_topic[t] = list(seen.values())
 
     # Sort each topic's problems by source weight (likelihood proxy)
     for t in by_topic:

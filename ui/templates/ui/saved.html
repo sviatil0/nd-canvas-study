@@ -1,0 +1,117 @@
+{% extends "ui/base.html" %}
+{% block title %}Saved problems · {{ cid }}{% endblock %}
+{% block content %}
+<a class="btn btn-sm btn-outline-secondary mb-3" href="{% url 'ui:course_detail' cid %}">&larr; back to course</a>
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h2 class="mb-0">⭐ Saved problems</h2>
+    <small class="text-muted">{{ saved|length }} starred. Click ⭐ on any problem in a topic page to save it here.</small>
+  </div>
+</div>
+
+{% if not saved %}
+  <div class="alert alert-secondary">No saved problems yet. Open a topic page → click ⭐ next to any problem.</div>
+{% endif %}
+
+{% for p in saved %}
+<div class="card mb-3 border-warning" id="p{{ forloop.counter }}" data-key="{{ p.key }}">
+  <div class="card-header">
+    <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+      <div class="d-flex align-items-center gap-2 flex-wrap" style="min-width:0; flex:1 1 auto;">
+        <span class="badge bg-warning text-dark">⭐ #{{ forloop.counter }}</span>
+        {% if p.topic %}
+        <a class="badge bg-secondary text-decoration-none"
+           href="{% url 'ui:topic_detail' cid p.topic %}">{{ topic_labels|default_if_none:''|default:'' }}{{ p.topic }}</a>
+        {% endif %}
+        {% if p.category == 'practice' %}<span class="badge bg-danger">practice</span>
+        {% elif p.category == 'exams' or p.category == 'exam_solutions' %}<span class="badge bg-warning text-dark">exam</span>
+        {% elif p.category == 'hw_keys' or p.category == 'homeworks' %}<span class="badge bg-info text-dark">hw</span>
+        {% elif p.category == 'in_class' %}<span class="badge bg-light text-dark border">in_class</span>
+        {% endif %}
+        {% if p.likelihood %}<span class="badge bg-dark">L:{{ p.likelihood }}</span>{% endif %}
+        {% if p.difficulty_label %}<span class="badge bg-secondary">{{ p.difficulty_label }}</span>{% endif %}
+        {% if p.source %}
+        <small class="text-muted text-truncate" style="min-width:0;">
+          <a href="{% url 'ui:serve_file' cid p.source %}" target="_blank" class="text-muted">{{ p.source }}</a>
+          {% if p.page %} · p{{ p.page }}{% endif %}{% if p.problem %} · #{{ p.problem }}{% endif %}
+        </small>
+        {% endif %}
+      </div>
+      <div class="d-flex gap-1">
+        <button class="btn btn-sm btn-warning star-btn flex-shrink-0"
+                type="button" data-key="{{ p.key }}" data-state="1" title="Remove from saved">
+          <span class="star-icon">⭐</span> Remove
+        </button>
+        {% if p.full_body %}
+        <a class="btn btn-sm btn-success" href="{% url 'ui:topic_detail' cid p.topic %}#p{{ forloop.counter }}">
+          Open in topic
+        </a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="card-body">
+    {% if p.missing %}
+      <div class="alert alert-warning small mb-0">
+        Original problem no longer in problems.json (re-extracted away?). Stem snapshot:<br>
+        <em>{{ p.stem }}</em>
+      </div>
+    {% else %}
+      <details class="mb-0 problem-stem-wrap" data-full-body="{{ p.full_body|default:p.stem|escape }}" open>
+        <summary class="text-primary" style="cursor:pointer;"><strong>Stem:</strong> {{ p.stem }}…</summary>
+        <div class="mt-2 p-3 border rounded problem-full" style="background:#fafaf6; font-size:15px; line-height:1.55;">
+          <em class="text-muted">rendering…</em>
+        </div>
+      </details>
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+
+<script>
+const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.split('=')[1] || '';
+
+function formatProblemBody(raw) {
+  let body = raw.replace(/\s+/g, ' ').trim();
+  body = body.replace(/\$\$([\d.\s\\quad]+)\$\$/g, (_m, inner) => inner.replace(/\\quad/g, '  ').replace(/\s+/g, ' ').trim());
+  body = body.replace(/\$([\d.\s\\quad]+)\$/g, (_m, inner) => inner.replace(/\\quad/g, '  ').replace(/\s+/g, ' ').trim());
+  body = body.replace(/\s([A-E])\.\s+(?=[A-Z0-9])/g, '\n- **$1.** ');
+  body = body.replace(/\s\(([a-h])\)\s+/g, '\n- **($1)** ');
+  body = body.replace(/^(\d+)\.\s+\(?(\d+\s*points?)?\)?\s*/i, (_m, num, pts) => `**${num}.**${pts ? '  *(' + pts + ')*' : ''}  `);
+  return body;
+}
+
+document.querySelectorAll('.problem-stem-wrap').forEach(det => {
+  const target = det.querySelector('.problem-full');
+  if (!target) return;
+  const raw = det.dataset.fullBody || '';
+  const md = formatProblemBody(raw);
+  window.markedReady.then(() => {
+    window.renderMarkdownInto(target, md);
+    if (window.renderMathInElement) renderMathIn(target);
+  });
+});
+
+document.querySelectorAll('.star-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    const fd = new FormData();
+    fd.append('key', btn.dataset.key);
+    fd.append('state', '0');
+    try {
+      const r = await fetch("{% url 'ui:save_toggle' cid %}", {
+        method: 'POST', headers: {'X-CSRFToken': csrf}, body: fd,
+      });
+      const data = await r.json();
+      if (data.ok) {
+        const card = btn.closest('.card');
+        card.style.transition = 'opacity 0.3s';
+        card.style.opacity = '0';
+        setTimeout(() => card.remove(), 350);
+      }
+    } catch (e) { btn.disabled = false; }
+  });
+});
+</script>
+{% endblock %}

@@ -5,10 +5,10 @@
 <h2>{{ course.name|default:cid }}</h2>
 <p class="text-muted">id <code>{{ cid }}</code> · {{ course.course_code|default:"" }} · {{ course.term.name|default:"" }}</p>
 
-<div class="row row-cols-2 row-cols-md-3 row-cols-lg-6 g-2 mb-4">
+<div class="row row-cols-2 row-cols-md-3 row-cols-lg-6 g-2 mb-3">
   <div class="col">
     <form method="post" action="{% url 'ui:sync_course' cid %}">{% csrf_token %}
-      <button class="btn btn-success w-100" title="Full pipeline: download → bundle → OCR → analyze → graph → class info">🔄 Prep all (full pipeline)</button>
+      <button class="btn btn-success w-100" title="Full pipeline: download → external scrape → google scrape → bundle → OCR → analyze → graph → class info">🔄 Prep all (full pipeline)</button>
     </form>
   </div>
   <div class="col">
@@ -55,6 +55,28 @@
   </div>
 </div>
 
+<div class="card mb-4 border-info">
+  <div class="card-body py-2">
+    <form method="post" action="{% url 'ui:external_scrape_run' cid %}" class="row g-2 align-items-end">{% csrf_token %}
+      <div class="col-md-7">
+        <label class="form-label small mb-0 fw-bold">🌐 External course site URL</label>
+        <input type="url" name="url" class="form-control form-control-sm"
+               placeholder="https://www3.nd.edu/~prof/teaching/cse-30332-sp26/">
+        <small class="text-muted">Paste prof's website. Will recursively scrape into <code>_external/</code>, then re-bundle + re-vectorize. Use this when Canvas has no content.</small>
+      </div>
+      <div class="col-md-3">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="google" value="1" id="gs">
+          <label class="form-check-label small" for="gs">Also pull Google Drive links from Canvas</label>
+        </div>
+      </div>
+      <div class="col-md-2">
+        <button class="btn btn-info btn-sm w-100" type="submit">Scrape now</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 {% if overall_total %}
 <div class="card mb-3 border-success">
   <div class="card-body py-2">
@@ -65,6 +87,45 @@
     <div class="progress" style="height:14px;">
       <div class="progress-bar bg-success" role="progressbar"
            style="width: {{ overall_pct }}%;" aria-valuenow="{{ overall_pct }}" aria-valuemin="0" aria-valuemax="100"></div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if sequential_topics %}
+<div class="card mb-4 border-primary">
+  <div class="card-body">
+    <h5 class="card-title">📚 Sequential study path ({{ sequential_topics|length }} topics)</h5>
+    <small class="text-muted d-block mb-3">Topologically ordered. Earlier topics are prerequisites for later ones. Each card shows your problem-solving progress + whether a deep AI summary exists.</small>
+    <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-2">
+      {% for t in sequential_topics %}
+      <div class="col">
+        <a class="text-decoration-none" href="{% url 'ui:topic_detail' cid t.key %}">
+          <div class="card h-100 border-{% if t.has_summary %}success{% else %}secondary{% endif %}">
+            <div class="card-body py-2 px-3">
+              <div class="d-flex justify-content-between align-items-start">
+                <div>
+                  <small class="text-muted">#{{ t.chapter }}</small>
+                  <strong class="d-block">{{ t.label }}</strong>
+                </div>
+                <span class="ms-2">
+                  {% if t.has_summary %}<span class="badge bg-success">📖 ready</span>
+                  {% else %}<span class="badge bg-light text-dark border">no summary</span>{% endif %}
+                </span>
+              </div>
+              {% if t.total %}
+              <div class="d-flex align-items-center gap-2 mt-1">
+                <div class="progress flex-grow-1" style="height:6px;">
+                  <div class="progress-bar bg-success" style="width: {{ t.pct }}%;"></div>
+                </div>
+                <small class="text-muted">{{ t.done }}/{{ t.total }}</small>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </a>
+      </div>
+      {% endfor %}
     </div>
   </div>
 </div>

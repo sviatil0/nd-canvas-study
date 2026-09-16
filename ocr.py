@@ -7,6 +7,8 @@ downloads/<course>/_ocr/<rel>.txt as page-separated text.
 Usage:
     python ocr.py --course-dir downloads/128781_statistics
     python ocr.py --course-dir <dir> --force      # re-OCR everything
+    python ocr.py --course-dir <dir> --all        # include lectures/other, not just problems
+    python ocr.py --course-dir <dir> --every-page # OCR every page, ignore the text-quality heuristic
 """
 from __future__ import annotations
 
@@ -53,7 +55,8 @@ def ocr_pdf(pdf: Path, dpi: int = 250, lang: str = "eng") -> list[str]:
     return out
 
 
-def process(course_dir: Path, force: bool = False) -> None:
+def process(course_dir: Path, force: bool = False, all_categories: bool = False,
+            every_page: bool = False) -> None:
     import json
     manifest_file = course_dir / "bundles" / "manifest.json"
     if not manifest_file.exists():
@@ -63,7 +66,7 @@ def process(course_dir: Path, force: bool = False) -> None:
     cache.mkdir(exist_ok=True)
 
     for row in manifest:
-        if row["category"] not in ALL_PROBLEM_CATEGORIES:
+        if not all_categories and row["category"] not in ALL_PROBLEM_CATEGORIES:
             continue
         rel = row["path"]
         pdf = course_dir / rel
@@ -88,7 +91,7 @@ def process(course_dir: Path, force: bool = False) -> None:
                 t = page.extract_text() or ""
             except Exception:
                 t = ""
-            if needs_ocr(t):
+            if every_page or needs_ocr(t):
                 if rendered_pages is None:
                     print(f"  OCR {rel}…")
                     try:
@@ -120,11 +123,17 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--course-dir", required=True)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--all", dest="all_categories", action="store_true",
+                    help="OCR every PDF in the manifest, including lectures and other")
+    ap.add_argument("--every-page", dest="every_page", action="store_true",
+                    help="OCR every page instead of only pages whose embedded text looks bad "
+                         "(slide decks embed jammed text that passes the heuristic)")
     args = ap.parse_args()
     cdir = Path(args.course_dir)
     if not cdir.is_dir():
         sys.exit(f"Not a directory: {cdir}")
-    process(cdir, force=args.force)
+    process(cdir, force=args.force, all_categories=args.all_categories,
+            every_page=args.every_page)
     return 0
 
 

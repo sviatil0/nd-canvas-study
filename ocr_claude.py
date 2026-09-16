@@ -32,16 +32,39 @@ PAGE_SEP = "\n\n--- page {n} ---\n\n"
 DPI = 200
 TIMEOUT = 180
 
-PROMPT = """Transcribe this page of a college statistics document EXACTLY as it appears.
+BASE_PROMPT = """Transcribe this page of a college {domain} document EXACTLY as it appears.
 
 Rules:
 - Preserve numbered problems (1., 2., (a), (b), etc.) on their own lines.
 - Convert math to LaTeX: inline $...$, display $$...$$.
 - Preserve tables as Markdown tables.
-- Keep ANOVA tables, regression output, and statistical tables intact.
+{domain_rules}
 - For handwritten work, transcribe what is written; mark unclear chars as [?].
 - Do NOT add commentary, headings, or summaries — output only the transcribed page text.
 """
+
+# Per-domain extras. Wrong-domain hints cost accuracy: a statistics prompt tells
+# the model to expect ANOVA tables on a page of pseudocode.
+DOMAIN_RULES = {
+    "statistics": "- Keep ANOVA tables, regression output, and statistical tables intact.",
+    "algorithms": (
+        "- Preserve pseudocode verbatim, including indentation, line numbers, and\n"
+        "  loop/conditional structure; use a fenced code block for it.\n"
+        "- Keep asymptotic notation exact: $O(n\\log n)$, $\\Theta(n^2)$, $\\Omega(n)$.\n"
+        "- Preserve recurrences, summations, and induction steps as written.\n"
+        "- Transcribe graph/tree figures as a short bracketed description, e.g.\n"
+        "  [figure: directed graph, vertices a-e, edge weights labeled]."
+    ),
+    "generic": "- Keep figures as short bracketed descriptions, e.g. [figure: ...].",
+}
+
+
+def build_prompt(domain: str) -> str:
+    rules = DOMAIN_RULES.get(domain, DOMAIN_RULES["generic"])
+    return BASE_PROMPT.format(domain=domain, domain_rules=rules)
+
+
+PROMPT = build_prompt("statistics")
 
 
 def render_pages(pdf: Path, work: Path) -> list[Path]:
@@ -55,8 +78,8 @@ def render_pages(pdf: Path, work: Path) -> list[Path]:
     return out
 
 
-def transcribe_page(png: Path) -> str:
-    prompt = f"{PROMPT}\n\nImage path: {png}\n\nUse the Read tool to load and transcribe it."
+def transcribe_page(png: Path, prompt_header: str = PROMPT) -> str:
+    prompt = f"{prompt_header}\n\nImage path: {png}\n\nUse the Read tool to load and transcribe it."
     # Pass prompt via stdin so --allowedTools doesn't swallow it as a value.
     proc = subprocess.run(
         [CLAUDE, "-p", "--allowedTools", "Read"],
@@ -70,7 +93,8 @@ def transcribe_page(png: Path) -> str:
 
 def process(course_dir: Path, limit: int | None, force: bool,
             categories: set[str] | None = None, match: str | None = None,
-            workers: int = 8) -> None:
+            workers: int = 8, domain: str = "statistics") -> None:
+    prompt_header = build_prompt(domain)
     manifest_file = course_dir / "bundles" / "manifest.json"
     if not manifest_file.exists():
         sys.exit("Run bundle.py first.")
@@ -110,14 +134,15 @@ def process(course_dir: Path, limit: int | None, force: bool,
         for i, png in enumerate(pages, 1):
             work_items.append((rel, png, i, len(pages)))
 
-    print(f"\nTranscribing {len(work_items)} pages from {len(pdf_pages)} PDFs with {workers} workers...")
+    print(f"\nTranscribing {len(work_items)} pages from {len(pdf_pages)} PDFs "
+          f"with {workers} workers (domain={domain})...")
     page_text: dict[tuple[str, int], str] = {}
     t_start = time.time()
 
     def task(item):
         rel, png, page_num, total = item
         t0 = time.time()
-        text = transcribe_page(png)
+        text = transcribe_page(png, prompt_header)
         return rel, page_num, text, time.time() - t0
 
     completed = 0
@@ -151,12 +176,19 @@ def main() -> int:
     ap.add_argument("--categories", help="comma-separated subset, e.g. 'practice,exam_solutions'")
     ap.add_argument("--match", help="only PDFs whose path contains this substring")
     ap.add_argument("--workers", type=int, default=8, help="parallel claude invocations")
+    ap.add_argument("--domain", default="statistics",
+                    choices=sorted(DOMAIN_RULES), help="subject-specific transcription rules")
+    ap.add_argument("--all", action="store_true",
+                    help="OCR every categorized PDF, not just problem-bearing ones")
     args = ap.parse_args()
     cdir = Path(args.course_dir)
     if not cdir.is_dir():
         sys.exit(f"Not a directory: {cdir}")
     cats = set(args.categories.split(",")) if args.categories else None
-    process(cdir, args.limit, args.force, categories=cats, match=args.match, workers=args.workers)
+    if args.all:
+        cats = ALL_PROBLEM_CATEGORIES | {"lectures", "tables", "textbook", "other"}
+    process(cdir, args.limit, args.force, categories=cats, match=args.match,
+            workers=args.workers, domain=args.domain)
     return 0
 
 

@@ -1,0 +1,92 @@
+{% extends "ui/base.html" %}
+{% block title %}Audio lectures · {{ cid }}{% endblock %}
+{% block content %}
+<a class="btn btn-sm btn-outline-secondary mb-3" href="{% url 'ui:course_detail' cid %}">&larr; back to course</a>
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h2 class="mb-0">🎧 Topic audio lectures</h2>
+    <small class="text-muted">{{ files|length }} podcast-style MP3s · {{ total_mb }} MB · Chirp3-HD-Aoede · ~5-7 min each</small>
+  </div>
+  <div class="d-flex gap-1 align-items-center">
+    <small class="text-muted me-1">Speed for all:</small>
+    <button class="btn btn-sm btn-outline-secondary global-speed" data-rate="1">1×</button>
+    <button class="btn btn-sm btn-outline-secondary global-speed" data-rate="1.25">1.25×</button>
+    <button class="btn btn-sm btn-primary global-speed" data-rate="1.5">1.5×</button>
+    <button class="btn btn-sm btn-outline-secondary global-speed" data-rate="1.75">1.75×</button>
+    <button class="btn btn-sm btn-outline-secondary global-speed" data-rate="2">2×</button>
+  </div>
+</div>
+
+{% if megamix %}
+<div class="card border-success mb-4">
+  <div class="card-body">
+    <h5 class="card-title">🏃 Exam-Review MEGAMIX (single combined podcast)</h5>
+    <small class="text-muted d-block mb-2">{{ megamix.size_mb }} MB · all topics in exam-priority order with smooth transitions · ~45-60 min at 1.5×. Best for runs/walks.</small>
+    <audio controls preload="none" style="width:100%; max-width:600px;">
+      <source src="{{ megamix.url }}" type="audio/mpeg">
+    </audio>
+    <a class="btn btn-sm btn-outline-success ms-2" href="{{ megamix.url }}" download="exam_review_megamix.mp3">⬇ Download megamix MP3</a>
+  </div>
+</div>
+{% endif %}
+
+{% if not files %}
+  <div class="alert alert-warning">
+    No audio files yet. Generate via <code>topic_audio.py --course-dir downloads/...</code>
+  </div>
+{% endif %}
+
+<div class="list-group">
+  {% for f in files %}
+  <div class="list-group-item">
+    <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+      <div style="min-width:0; flex:1;">
+        <strong>{{ f.label }}</strong>
+        <small class="text-muted ms-2">{{ f.size_mb }} MB</small>
+        <br>
+        <audio controls preload="none" style="width:100%; max-width:540px; margin-top:6px;">
+          <source src="{{ f.url }}" type="audio/mpeg">
+        </audio>
+      </div>
+      <div class="d-flex gap-2 flex-shrink-0">
+        <a class="btn btn-sm btn-outline-primary" href="{{ f.url }}" download="{{ f.topic }}.mp3">⬇ Download</a>
+        <a class="btn btn-sm btn-outline-info" href="{% url 'ui:topic_detail' cid f.topic %}">Topic page</a>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% if files %}
+<div class="card mt-4">
+  <div class="card-body">
+    <h6 class="card-title">Bulk download (offline studying)</h6>
+    <p class="small text-muted mb-2">
+      All MP3s live in <code>downloads/{{ cid }}_*/bundles/audio/*.mp3</code>.
+      Drag the folder into your phone or a USB stick. Total {{ total_mb }} MB.
+    </p>
+  </div>
+</div>
+{% endif %}
+
+<script>
+(function() {
+  const audios = document.querySelectorAll('audio');
+  // Set default 1.5x for all on page load
+  audios.forEach(a => { a.playbackRate = 1.5; });
+  document.querySelectorAll('.global-speed').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const rate = parseFloat(btn.dataset.rate);
+      audios.forEach(a => { a.playbackRate = rate; });
+      document.querySelectorAll('.global-speed').forEach(x => {
+        x.classList.remove('btn-primary');
+        x.classList.add('btn-outline-secondary');
+      });
+      btn.classList.remove('btn-outline-secondary');
+      btn.classList.add('btn-primary');
+    });
+  });
+})();
+</script>
+{% endblock %}

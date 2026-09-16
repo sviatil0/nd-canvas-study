@@ -37,13 +37,16 @@ DPI = 200
 TIMEOUT = 120
 DEFAULT_RPM = 60
 
-PROMPT = """Transcribe this page of a college statistics document EXACTLY as it appears.
+PROMPT = """Transcribe this page of a college course document EXACTLY as it appears.
 
 Rules:
 - Preserve numbered problems (1., 2., (a), (b), etc.) on their own lines.
 - Convert math to LaTeX: inline $...$, display $$...$$.
 - Preserve tables as Markdown tables.
-- Keep ANOVA tables, regression output, and statistical tables intact.
+- Keep statistical tables, regression output, algorithm pseudocode blocks, and
+  code listings intact, including indentation.
+- Describe figures, diagrams, and plots in one bracketed line, e.g.
+  [Figure: encoder-decoder with attention; arrows from each source state to the decoder].
 - For handwritten work, transcribe what is written; mark unclear chars as [?].
 - Do NOT add commentary, headings, or summaries — output only the transcribed page text.
 """
@@ -99,6 +102,23 @@ def transcribe_page(model, png: Path, limiter: RateLimiter, region: str = "", re
             else:
                 time.sleep(3)
     return f"[vertex error after {retries} tries in {region}: {last_err[:200]}]"
+
+
+def is_degenerate(text: str, run_limit: int = 40) -> bool:
+    """True when the model fell into a repetition loop (e.g. a page of `\\quad`).
+
+    One bad page can otherwise balloon a chapter's cached text by 100x and poison
+    every downstream bundle, summary, and vector chunk.
+    """
+    tokens = text.split()
+    if len(tokens) < run_limit:
+        return False
+    run = 1
+    for a, b in zip(tokens, tokens[1:]):
+        run = run + 1 if a == b else 1
+        if run >= run_limit:
+            return True
+    return False
 
 
 def shard_path(cache: Path, rel: str, page: int) -> Path:
@@ -207,7 +227,8 @@ def process(course_dir: Path, project: str, locations: list[str], model_name: st
         for fut in as_completed(futures):
             rel, png, page_num, total, text, dt, region = fut.result()
             completed += 1
-            ok = text and "[vertex error" not in text and len(text) > 50
+            ok = (text and "[vertex error" not in text and len(text) > 50
+                  and not is_degenerate(text))
             shard = shard_path(cache, rel, page_num)
             shard.parent.mkdir(parents=True, exist_ok=True)
             shard.write_text(text)

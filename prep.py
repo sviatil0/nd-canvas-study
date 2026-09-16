@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from difflib import SequenceMatcher
@@ -112,10 +113,25 @@ def main() -> int:
     ap.add_argument("query", nargs="?", help="class name (fuzzy match)")
     ap.add_argument("--list", action="store_true", help="list active courses and exit")
     ap.add_argument("--skip-sync", action="store_true", help="don't redownload")
+    ap.add_argument("--skip-external", action="store_true",
+                    help="skip external course-site + Google Drive scrape")
     ap.add_argument("--skip-bundle", action="store_true")
     ap.add_argument("--skip-analyze", action="store_true")
     ap.add_argument("--skip-vector", action="store_true", help="skip building vector index")
-    ap.add_argument("--with-panopto", action="store_true", help="also pull Panopto transcripts (interactive login)")
+    ap.add_argument("--with-panopto", action="store_true",
+                    help="also pull Panopto lecture transcripts via the Canvas LTI launch")
+    ap.add_argument("--panopto-tool-id", type=int,
+                    help="Canvas external_tools id, when the tabs API does not expose it")
+    ap.add_argument("--with-email", action="store_true",
+                    help="also ingest the course's email traffic from Gmail")
+    ap.add_argument("--email-account", default="nd", help="gmail-mcp account alias")
+    ap.add_argument("--email-query", action="append",
+                    help="extra Gmail query; defaults are derived from the course code")
+    ap.add_argument("--email-since", default=None, help="Gmail after: date, e.g. 2026/08/01")
+    ap.add_argument("--claude-ocr", action="store_true",
+                    help="transcribe PDFs with Claude vision instead of Tesseract")
+    ap.add_argument("--domain", default="generic",
+                    help="subject hint for Claude OCR (algorithms, statistics, generic)")
     ap.add_argument("--with-summaries", action="store_true", help="also generate concept summaries (slow)")
     ap.add_argument("--serve", action="store_true", help="launch Django UI after")
     ap.add_argument("--ask", help="after pipeline, run a semantic query against the index")
@@ -141,17 +157,57 @@ def main() -> int:
     if not cdir:
         sys.exit(f"Download dir for course {cid} not found.")
 
+    # Auto-detect external course site + scrape it (best-effort, non-fatal)
+    if not args.skip_external:
+        run([PYTHON, "external_scrape.py", "--course-dir", str(cdir),
+             "--auto", "--max-pages", "150"], check=False)
+        # Also pull all Google Drive links from Canvas content (Docs/Slides)
+        run([PYTHON, "google_scrape.py", "--course-dir", str(cdir),
+             "--from-canvas"], check=False)
+
+    if args.with_email:
+        queries = list(args.email_query or [])
+        if not queries:
+            # "FA26-CSE-40113-01" -> "CSE 40113": instructors write the number
+            # with and without the space, so match both.
+            m = re.search(r"([A-Z]{2,4})[- ](\d{5})", (course.get("course_code") or "").upper())
+            if m:
+                dept, num = m.groups()
+                queries = [f'"{dept} {num}" OR "{dept}{num}"']
+            else:
+                print("Could not derive an email query from the course code; "
+                      "pass --email-query explicitly.")
+        if queries:
+            cmd = [PYTHON, "email_ingest.py", "--course-dir", str(cdir),
+                   "--account", args.email_account]
+            for q in queries:
+                cmd += ["--query", q]
+            if args.email_since:
+                cmd += ["--since", args.email_since]
+            run(cmd, check=False)
+
+    # Office files (Canvas .docx/.pptx) only reach the index as rendered PDFs.
+    run([PYTHON, "office_prep.py", "--course-dir", str(cdir)], check=False)
+
     if not args.skip_bundle:
         # OCR scanned/handwritten exam PDFs first so bundles + analyze get clean text
         run([PYTHON, "bundle.py", "--course-dir", str(cdir)])
-        run([PYTHON, "ocr.py", "--course-dir", str(cdir)], check=False)
+        if args.claude_ocr:
+            run([PYTHON, "ocr_claude.py", "--course-dir", str(cdir), "--all",
+                 "--domain", args.domain], check=False)
+        else:
+            run([PYTHON, "ocr.py", "--course-dir", str(cdir)], check=False)
         # Re-bundle so OCR'd text replaces garbled pypdf output
         run([PYTHON, "bundle.py", "--course-dir", str(cdir)])
     if not args.skip_analyze:
         run([PYTHON, "analyze.py", "--course-dir", str(cdir)])
     run([PYTHON, "problems.py", "--course-dir", str(cdir)])
     if args.with_panopto:
-        run([PYTHON, "panopto.py", "--course-dir", str(cdir)])
+        cmd = [PYTHON, "panopto_lti_scraper.py", "--course-id", str(cid),
+               "--course-dir", str(cdir)]
+        if args.panopto_tool_id:
+            cmd += ["--tool-id", str(args.panopto_tool_id)]
+        run(cmd, check=False)
     if not args.skip_vector:
         run([PYTHON, "vectorize.py", "--course-dir", str(cdir), "--rebuild"])
     if args.with_summaries:

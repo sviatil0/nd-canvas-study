@@ -94,11 +94,46 @@ def collect_text(course_dir: Path) -> str:
     for f in (course_dir / "modules").rglob("assignments/*.html") if (course_dir / "modules").exists() else []:
         add(f"assignment: {f.stem}", f.read_text(errors="ignore"))
 
-    # All "details" PDFs aren't useful directly here (binary), but their OCR text is
+    # PDFs are binary, but their extracted / OCR text is the richest source of policy
+    # info in courses whose Canvas shell is empty and whose syllabus is a PDF handout.
+    # Syllabus- and schedule-named files go first so they survive MAX_INPUT_CHARS.
     ocr_dir = course_dir / "_ocr"
     if ocr_dir.exists():
-        for f in ocr_dir.glob("*details*.txt"):
+        def ocr_rank(f: Path) -> tuple[int, str]:
+            name = f.stem.lower()
+            important = any(k in name for k in (
+                "syllab", "schedule", "polic", "detail", "grading", "calendar", "info",
+            ))
+            return (0 if important else 1, str(f))
+
+        for f in sorted(ocr_dir.glob("*.txt"), key=ocr_rank):
             add(f"ocr: {f.stem}", f.read_text(errors="ignore"))
+
+    # Canvas wiki front page (course homepage)
+    fp = course_dir / "front_page.html"
+    if fp.exists():
+        add("front_page (Canvas homepage)", fp.read_text(errors="ignore"))
+
+    # External course-website pages (scraped). Generic ND/Canvas support sites are
+    # boilerplate; they used to eat the whole MAX_INPUT_CHARS budget before the real
+    # syllabus page was reached, so course-site pages go first and noise goes last.
+    ext_dir = course_dir / "_external"
+    if ext_dir.exists():
+        def ext_rank(f: Path) -> tuple[int, str]:
+            domain = f.relative_to(ext_dir).parts[0].lower()
+            noisy = any(k in domain for k in (
+                "service-now", "servicenow", "canvaslms.com", "instructure.com",
+                "supportandcare.nd.edu", "bookstore", "google.com", "youtube.com",
+            ))
+            # Pages whose names look syllabus-y outrank the rest of the same site.
+            syllabusy = any(k in f.stem.lower() for k in (
+                "syllab", "schedule", "polic", "teaching", "grading", "course",
+            ))
+            return (1 if noisy else 0, 0 if syllabusy else 1, str(f))
+
+        for f in sorted(ext_dir.rglob("*.html"), key=ext_rank):
+            add(f"external page: {f.relative_to(course_dir)}",
+                f.read_text(errors="ignore"))
 
     text = "\n\n".join(chunks)
     return text[:MAX_INPUT_CHARS]

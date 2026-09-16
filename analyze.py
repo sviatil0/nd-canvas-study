@@ -15,8 +15,9 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-# Stats topic keyword dictionary. Each topic has a list of regex aliases.
-TOPICS = {
+# Per-course topic keyword dictionaries. Each topic has a list of regex aliases.
+
+_TOPICS_STATS = {
     "descriptive_statistics":   [r"mean", r"median", r"mode", r"variance", r"standard deviation", r"quartile", r"percentile", r"boxplot", r"histogram", r"stem.{0,3}leaf"],
     "probability_basics":       [r"sample space", r"\bevent\b", r"complement", r"\bunion\b", r"intersection", r"mutually exclusive"],
     "conditional_probability":  [r"conditional probab", r"P\(.*\|.*\)", r"bayes"],
@@ -41,6 +42,104 @@ TOPICS = {
     "nonparametric":            [r"nonparametric", r"rank.{0,4}sum", r"wilcoxon", r"sign test", r"mann.{0,3}whitney"],
     "categorical_data":         [r"contingency table", r"categorical", r"proportion test"],
 }
+
+_TOPICS_COMP_ARCH = {
+    "isa_basics":               [r"\bISA\b", r"instruction set", r"opcode", r"register file", r"datapath", r"control unit", r"\bALU\b"],
+    "performance_metrics":      [r"\bCPI\b", r"\bMIPS\b", r"clock cycle", r"clock rate", r"amdahl", r"speedup", r"execution time", r"\bIPC\b"],
+    "riscv_instructions":       [r"RISC.?V", r"\baddi?\b", r"\blw\b", r"\bsw\b", r"\bbeq\b", r"\bbne\b", r"\bjal\b", r"\bjalr\b", r"r-?type", r"i-?type", r"s-?type"],
+    "riscv_encoding":           [r"opcode field", r"funct3", r"funct7", r"immediate field", r"sign.?extend", r"instruction format", r"u-?type", r"b-?type", r"j-?type"],
+    "riscv_control_procedures": [r"\bra\b", r"\bsp\b", r"stack frame", r"calling convention", r"caller.?save", r"callee.?save", r"return address", r"prologue", r"epilogue", r"function call"],
+    "pipelining_intro":         [r"pipeline", r"\bIF\b", r"\bID\b", r"\bEX\b", r"\bMEM\b", r"\bWB\b", r"pipeline register", r"throughput"],
+    "pipeline_data_hazards":    [r"data hazard", r"\bRAW\b", r"\bWAR\b", r"\bWAW\b", r"forwarding", r"bypassing", r"load.?use hazard", r"\bstall\b"],
+    "pipeline_control_hazards": [r"control hazard", r"branch hazard", r"branch penalty", r"\bflush\b", r"delayed branch", r"branch resolution"],
+    "memory_hierarchy_intro":   [r"memory hierarchy", r"\bSRAM\b", r"\bDRAM\b", r"locality", r"temporal locality", r"spatial locality", r"working set"],
+    "direct_mapped_cache":      [r"direct.?mapped", r"cache line", r"cache block", r"\btag\b", r"\bindex\b", r"\boffset\b", r"valid bit"],
+    "associative_cache":        [r"set.?associative", r"fully.?associative", r"\bway\b", r"replacement policy", r"\bLRU\b", r"\bFIFO\b", r"random replacement"],
+    "cache_performance":        [r"\bAMAT\b", r"average memory access", r"hit rate", r"miss rate", r"hit time", r"miss penalty", r"compulsory miss", r"capacity miss", r"conflict miss"],
+    "cache_aware_programming":  [r"loop tiling", r"loop blocking", r"cache.?aware", r"cache.?friendly", r"row.?major", r"column.?major", r"prefetch"],
+    "virtual_memory_intro":     [r"virtual memory", r"physical address", r"virtual address", r"address translation", r"\bMMU\b"],
+    "vm_paging":                [r"page table", r"page size", r"\bPTE\b", r"page fault", r"page frame", r"\bVPN\b", r"\bPPN\b", r"multi.?level page"],
+    "vm_tlb_performance":       [r"\bTLB\b", r"translation lookaside buffer", r"TLB hit", r"TLB miss", r"TLB reach"],
+    "branch_prediction":        [r"branch predict", r"\bBHT\b", r"branch history", r"2.?bit predictor", r"correlating predictor", r"tournament predictor", r"\bBTB\b"],
+    "scheduling_intro":         [r"instruction.?level parallelism", r"\bILP\b", r"static scheduling", r"in.?order", r"out.?of.?order", r"loop unroll"],
+    "dynamic_scheduling":       [r"tomasulo", r"reservation station", r"reorder buffer", r"\bROB\b", r"register renaming", r"common data bus", r"\bCDB\b", r"speculative execution"],
+    "parallelism_intro":        [r"\bSMP\b", r"multiprocessor", r"shared memory", r"thread.?level parallelism", r"\bTLP\b", r"multicore", r"\bSIMD\b", r"\bMIMD\b"],
+    "cache_coherence":          [r"cache coherence", r"\bMESI\b", r"\bMSI\b", r"snooping", r"snoopy", r"directory protocol", r"false sharing", r"write.?invalidate", r"write.?update", r"coherence protocol"],
+}
+
+_TOPICS_PARADIGMS = {
+    "course_overview":          [r"\bparadigm\b", r"course\s+overview", r"programming.*paradigm"],
+    "javascript_basics":        [r"\bvar\b", r"\blet\b", r"\bconst\b", r"\bhoisting\b", r"javascript.*type", r"\bNaN\b", r"undefined", r"strict\s+mode"],
+    "javascript_closures":      [r"\bclosure\b", r"\blexical\s+scope", r"this\s+keyword", r"\bIIFE\b", r"deep\s+binding", r"shallow\s+binding"],
+    "javascript_objects":       [r"\bprototype\b", r"prototypal", r"Object\.create", r"class\s+extends", r"new\s+target"],
+    "javascript_async":         [r"\bpromise\b", r"\basync\b", r"\bawait\b", r"event\s+loop", r"setTimeout", r"\bcallback\b", r"microtask", r"macrotask"],
+    "frontend_dom":             [r"\bDOM\b", r"document\.querySelector", r"addEventListener", r"event\s+listener", r"event.driven"],
+    "frontend_mvc":             [r"\bMVC\b", r"model.view.controller", r"\bview\b\s+component", r"\bcontroller\b\s+component"],
+    "exam1_review":             [r"exam\s*1\s*review", r"midterm\s*1.*review"],
+    "python_basics":            [r"\bdef\s+\w+", r"\bself\b", r"python.*scope", r"GIL", r"duck\s+typing", r"strongly.?typed", r"dynamically.?typed"],
+    "python_advanced":          [r"\bdecorator\b", r"@\w+", r"list\s+comprehension", r"\byield\b", r"generator", r"context\s+manager", r"with\s+open"],
+    "django_intro":             [r"\bdjango\b", r"manage\.py", r"settings\.py", r"\bMVT\b", r"model.template.view"],
+    "django_models":            [r"models\.py", r"models\.Model", r"makemigrations", r"\bORM\b", r"ForeignKey", r"queryset"],
+    "django_views_templates":   [r"views\.py", r"render\(.*template", r"urls\.py", r"url\s+pattern", r"template\s+tag"],
+    "django_forms_auth":        [r"forms\.py", r"login_required", r"@login_required", r"\bsessions\b", r"\bauth\b\s+(decorator|middleware)", r"CSRF"],
+    "rest_apis":                [r"\bREST\b", r"\bRESTful\b", r"HTTP\s+(GET|POST|PUT|DELETE|PATCH)", r"stateless", r"\bidempotent\b", r"resource\s+representation"],
+    "exam2_review":             [r"exam\s*2\s*review", r"midterm\s*2.*review"],
+    "java_basics":              [r"\bJava\b", r"public\s+static\s+void\s+main", r"\bJVM\b", r"\.java\b", r"javac", r"static.?typed"],
+    "java_oop":                 [r"\bextends\b", r"\binterface\b", r"\babstract\b", r"\bpolymorphism\b", r"late\s+binding", r"method\s+overriding", r"\binheritance\b"],
+    "java_collections":         [r"java\.util\b", r"ArrayList", r"HashMap", r"\bgenerics?\b", r"<T>", r"equals\(.*Object", r"hashCode\(\)"],
+    "java_concurrency":         [r"java\.util\.concurrent", r"\bThread\b", r"\bRunnable\b", r"\bsynchronized\b", r"ExecutorService", r"\bAtomicInteger\b"],
+    "clojure_intro":            [r"\bClojure\b", r"\bdefn\b", r"\(def\s+", r"S-?expression", r"\bLisp\b"],
+    "clojure_immutability":    [r"immutable", r"persistent\s+data", r"\brecur\b", r"lazy\s+seq", r"lazy\s+evaluation"],
+    "functional_higher_order":  [r"\bmap\b\s*\(", r"\bfilter\b\s*\(", r"\breduce\b\s*\(", r"higher.?order", r"first.?class\s+function", r"pure\s+function"],
+    "paradigms_comparison":     [r"imperative", r"declarative", r"object.?oriented", r"functional\s+programming", r"event.driven\s+programming"],
+    "binding_typing":           [r"static\s+typing", r"dynamic\s+typing", r"strong.?typed", r"weak.?typed", r"deep\s+binding", r"shallow\s+binding", r"variable\s+hoisting"],
+}
+
+# CSE 40657 — Natural Language Processing (cid 145184), Bang Nguyen, fall 2026.
+# Topic keys follow the instructor's 15-week schedule on bnguyen5.github.io.
+_TOPICS_NLP = {
+    "nlp_overview":             [r"\bNLP\b", r"natural language processing", r"language technolog", r"course overview", r"\bsyllabus\b"],
+    "ml_foundations":           [r"supervised learning", r"train.{0,10}test split", r"\bfeatures?\b", r"logistic regression", r"naive bayes", r"gradient descent", r"loss function", r"cross.?entropy", r"overfit"],
+    "tokenization":             [r"token(?:ize|ization|izer)", r"\bBPE\b", r"byte.?pair", r"wordpiece", r"sentencepiece", r"subword", r"\blemma", r"stemming", r"\bmorpholog", r"\bregex\b", r"edit distance", r"\btype[s]? .{0,10}token"],
+    "ngram_language_models":    [r"\bn-?gram\b", r"bigram", r"trigram", r"unigram", r"markov assumption", r"\bsmoothing\b", r"laplace", r"add.?one", r"kneser.?ney", r"backoff", r"interpolat"],
+    "lm_evaluation":            [r"\bperplexity\b", r"held.?out", r"\bBLEU\b", r"\bROUGE\b", r"\bF1\b", r"precision.{0,10}recall", r"intrinsic evaluation", r"extrinsic evaluation", r"\baccuracy\b"],
+    "neural_networks":          [r"neural network", r"feed.?forward", r"\bMLP\b", r"backprop", r"activation function", r"\bReLU\b", r"\bsoftmax\b", r"\bPyTorch\b", r"\btensor\b", r"embedding layer"],
+    "neural_language_models":   [r"neural language model", r"word2vec", r"\bGloVe\b", r"skip.?gram", r"\bCBOW\b", r"word embedding", r"distributional semantic", r"\bRNN\b", r"\bLSTM\b", r"\bGRU\b", r"vanishing gradient"],
+    "pos_tagging_parsing":      [r"part.?of.?speech", r"\bPOS tag", r"\bHMM\b", r"hidden markov", r"viterbi", r"\bCRF\b", r"sequence label", r"\bBIO\b tag", r"named entity", r"\bNER\b", r"constituency", r"dependency pars", r"\bCKY\b", r"context.?free grammar", r"\bPCFG\b", r"treebank"],
+    "encoder_decoder_attention":[r"encoder.?decoder", r"seq2seq", r"sequence.?to.?sequence", r"\battention\b", r"attention weight", r"\bcontext vector\b", r"beam search", r"teacher forcing"],
+    "machine_translation":      [r"machine translation", r"\bMT\b", r"parallel corpus", r"alignment model", r"\bIBM model", r"\bBLEU\b", r"back.?translation", r"source.{0,10}target language"],
+    "transformers":             [r"\btransformer\b", r"self.?attention", r"multi.?head", r"positional encoding", r"query.{0,5}key.{0,5}value", r"layer norm", r"residual connection", r"\bBERT\b", r"\bGPT\b", r"masked language model"],
+    "llm_training":             [r"large language model", r"\bLLM\b", r"pre.?train", r"scaling law", r"\btokens? budget\b", r"data curation", r"distributed training", r"mixed precision", r"\bcheckpoint"],
+    "llm_posttraining":         [r"post.?train", r"instruction tun", r"fine.?tun", r"\bRLHF\b", r"reward model", r"\bDPO\b", r"preference optimization", r"alignment", r"\bLoRA\b", r"parameter.?efficient", r"\bPEFT\b", r"chain.?of.?thought", r"in.?context learning", r"few.?shot", r"prompt"],
+    "semantics_retrieval":      [r"semantic", r"word sense", r"\bWSD\b", r"semantic role", r"\bSRL\b", r"coreference", r"question answering", r"\bretrieval\b", r"\bRAG\b", r"dense retriev", r"\bBM25\b", r"vector (?:store|database|index)", r"\bknowledge base\b"],
+    "evaluation_interpretability": [r"interpretab", r"explainab", r"probing", r"attention visuali", r"saliency", r"\bablation\b", r"benchmark", r"human evaluation", r"\bMMLU\b", r"\bGLUE\b", r"contamination"],
+    "responsible_nlp":          [r"\bbias\b", r"fairness", r"\btoxicity\b", r"\bharm", r"hallucinat", r"privacy", r"responsible (?:AI|NLP)", r"ethic", r"\bmisinformation\b", r"data provenance"],
+    "multilingual_lowresource": [r"multilingual", r"cross.?lingual", r"low.?resource", r"zero.?shot transfer", r"\btransfer learning\b", r"language famil", r"\bcode.?switch"],
+}
+
+_COURSE_TOPICS: dict[int, dict] = {
+    128781: _TOPICS_STATS,
+    130417: _TOPICS_COMP_ARCH,
+    129492: _TOPICS_PARADIGMS,
+    145184: _TOPICS_NLP,
+}
+
+
+def topics_for_course(cid: int) -> dict:
+    return _COURSE_TOPICS.get(int(cid), _TOPICS_STATS)
+
+
+def detect_course_id(course_dir: Path) -> int | None:
+    """Sniff Canvas cid from `<cid>_<slug>` directory name."""
+    name = course_dir.name
+    for part in name.split("_"):
+        if part.isdigit():
+            return int(part)
+    return None
+
+
+# Default to STATS for backwards-compat code paths
+TOPICS = _TOPICS_STATS
 
 
 def load_text(path: Path) -> str:
@@ -75,6 +174,8 @@ def normalize(c: Counter) -> dict[str, float]:
 
 
 def analyze(course_dir: Path) -> None:
+    global TOPICS
+    TOPICS = topics_for_course(detect_course_id(course_dir) or 0)
     bundles = course_dir / "bundles"
     if not bundles.exists():
         print(f"Run bundle.py first; missing {bundles}")

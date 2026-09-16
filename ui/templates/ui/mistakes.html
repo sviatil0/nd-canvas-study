@@ -1,0 +1,392 @@
+{% extends "ui/base.html" %}
+{% block title %}Mistakes · {{ cid }}{% endblock %}
+{% block content %}
+<a class="btn btn-sm btn-outline-secondary mb-3" href="{% url 'ui:course_detail' cid %}">&larr; back to course</a>
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h2 class="mb-0">❌ Mistakes from Gradescope</h2>
+    <small class="text-muted">{{ wrong_total }} questions where you lost points across {{ assignments|length }} graded assignments. Click "Explain" to get a Gemini breakdown of what went wrong + how to fix it for the final.</small>
+  </div>
+  <div class="d-flex gap-2 align-items-center flex-wrap">
+    <button class="btn btn-sm btn-success" id="explain-all-btn">
+      <span class="btn-label">🤖 Explain all wrong (parallel)</span>
+      <span class="spinner-border spinner-border-sm d-none" id="explain-all-spin"></span>
+    </button>
+    <form id="pull-form" class="d-flex gap-2 align-items-center">{% csrf_token %}
+      <input type="text" class="form-control form-control-sm" name="gs_course_id"
+             value="{{ course_id_gs|default:'' }}" placeholder="Gradescope course id"
+             style="width:160px;">
+      <button class="btn btn-sm btn-outline-primary" type="submit" id="pull-btn">
+        <span class="btn-label">Re-pull from Gradescope</span>
+        <span class="spinner-border spinner-border-sm d-none" id="pull-spin"></span>
+      </button>
+    </form>
+  </div>
+  <div class="w-100"></div>
+  <div id="explain-all-progress" class="alert alert-info d-none w-100 mt-2 mb-0 small"></div>
+</div>
+
+{% if not assignments %}
+  <div class="alert alert-warning">
+    No Gradescope data cached. Either you don't have any wrong answers (nice!),
+    or you haven't pulled yet. Run:
+    <code>.venv/bin/python gradescope_pull.py --course-id &lt;ID&gt; --course-dir downloads/{{ cid }}_…</code>
+  </div>
+{% endif %}
+
+{% for a in assignments %}
+<div class="card mb-4 border-danger">
+  <div class="card-header bg-light d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <strong class="fs-5">{{ a.name }}</strong>
+      <span class="badge bg-danger ms-2">{{ a.score }} / {{ a.max_score }}</span>
+      <span class="badge bg-warning text-dark ms-1">{{ a.wrong|length }} wrong</span>
+    </div>
+    <a href="{{ a.url }}" target="_blank" class="btn btn-sm btn-outline-secondary">Open in Gradescope ↗</a>
+  </div>
+  <div class="card-body p-0">
+    {% for w in a.wrong %}
+    <div class="border-top p-3 mistake-row" data-aid="{{ a.id }}" data-qid="{{ w.question_id }}" data-key="{{ w.key }}">
+      <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-2">
+        <div>
+          <strong>{{ w.title }}</strong>
+          <span class="badge bg-secondary ms-1">{{ w.score }} / {{ w.max_score }}</span>
+          <span class="badge bg-danger ms-1">−{{ w.lost }} pts ({{ w.pct_lost }}%)</span>
+        </div>
+        <div class="d-flex gap-1">
+          <button class="btn btn-sm flag-btn {% if w.flagged %}btn-danger{% else %}btn-outline-danger{% endif %}"
+                  type="button" title="Flag for regrade discussion with professor">
+            {% if w.flagged %}🚩 Flagged ({{ w.flag_status }}){% else %}🚩 Flag for regrade{% endif %}
+          </button>
+          <button class="btn btn-sm btn-success explain-btn" type="button">
+            {% if w.explanation %}Re-generate explanation{% else %}🤖 Explain my mistake{% endif %}
+          </button>
+        </div>
+      </div>
+      <div class="regrade-form mb-2 {% if not w.flagged %}d-none{% endif %}">
+        <div class="alert alert-warning py-2 px-2 mb-0">
+          <div class="small text-muted mb-1">📝 <strong>My reasoning for regrade</strong> (paste exact wording you'll use with prof):</div>
+          <textarea class="form-control form-control-sm regrade-notes" rows="3"
+                    placeholder="e.g. 'My answer matched the rubric for full credit because…'">{{ w.flag_notes }}</textarea>
+          <div class="d-flex gap-2 align-items-center mt-1">
+            <select class="form-select form-select-sm regrade-status" style="width:auto;">
+              {% with cur=w.flag_status|default:'open' %}
+              <option value="open" {% if cur == 'open' %}selected{% endif %}>open</option>
+              <option value="drafted" {% if cur == 'drafted' %}selected{% endif %}>drafted</option>
+              <option value="sent" {% if cur == 'sent' %}selected{% endif %}>sent to prof</option>
+              <option value="resolved" {% if cur == 'resolved' %}selected{% endif %}>resolved (got credit)</option>
+              <option value="rejected" {% if cur == 'rejected' %}selected{% endif %}>rejected</option>
+              {% endwith %}
+            </select>
+            <button class="btn btn-sm btn-success regrade-save-btn" type="button">Save</button>
+            <span class="small text-success regrade-saved-msg d-none">✓ saved</span>
+          </div>
+        </div>
+      </div>
+      {% if w.rubric_items %}
+      <div class="small text-muted mb-2">
+        <strong>Rubric items applied:</strong>
+        <ul class="mb-0">
+          {% for ri in w.rubric_items %}<li>{{ ri }}</li>{% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+      {% if w.comments %}
+      <div class="alert alert-warning py-2 small mb-2">
+        <strong>Grader comment:</strong> {{ w.comments }}
+      </div>
+      {% endif %}
+      <div class="row g-2">
+        <div class="{% if w.has_solution_img %}col-lg-4 col-md-6{% else %}col-lg-6 col-md-6{% endif %}">
+          <div class="border rounded p-2 bg-white h-100">
+            <strong class="d-block small text-danger mb-2">📝 Your answer (graded)</strong>
+            <img src="{{ w.img_url }}" class="img-fluid border" loading="lazy"
+                 onerror="this.replaceWith(Object.assign(document.createElement('em'),{textContent:'(no image cached)',className:'text-muted small'}))">
+          </div>
+        </div>
+        {% if w.has_solution_img %}
+        <div class="col-lg-4 col-md-6">
+          <div class="border rounded p-2 bg-white h-100">
+            <strong class="d-block small text-success mb-2">✅ Official solution (page)</strong>
+            <img src="{{ w.solution_img_url }}" class="img-fluid border" loading="lazy"
+                 onerror="this.replaceWith(Object.assign(document.createElement('em'),{textContent:'(rendering failed)',className:'text-muted small'}))">
+          </div>
+        </div>
+        {% endif %}
+        <div class="{% if w.has_solution_img %}col-lg-4 col-md-12{% else %}col-lg-6 col-md-12{% endif %}">
+          <div class="explanation-box {% if not w.explanation %}d-none{% endif %} alert alert-light border border-info h-100" style="border-left-width:4px !important;">
+            <strong class="d-block mb-1 text-info">🤖 What went wrong:</strong>
+            <div class="explanation-md" data-raw="{{ w.explanation|escape }}"></div>
+            <hr class="my-2">
+            <div class="d-flex gap-1 align-items-stretch flex-wrap mistake-followup-form">
+              <textarea class="form-control form-control-sm flex-grow-1 mistake-fu-q" rows="1"
+                        placeholder="💬 Follow-up (e.g. 'show me a similar problem')"
+                        style="min-width:160px;"></textarea>
+              <button class="btn btn-sm btn-outline-info mistake-fu-btn" type="button">Ask</button>
+            </div>
+            <div class="mistake-fu-thread mt-2"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endfor %}
+
+<script>
+const csrf = document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.split('=')[1] || '';
+
+// Render existing explanations as Markdown via DOMPurify-backed renderer
+document.querySelectorAll('.explanation-md').forEach(el => {
+  const raw = el.dataset.raw || '';
+  if (raw) {
+    window.markedReady.then(() => {
+      window.renderMarkdownInto(el, raw);
+      if (window.renderMathInElement) renderMathIn(el);
+    });
+  }
+});
+
+function setPlain(el, kind, text) {
+  el.replaceChildren();
+  const span = document.createElement('em');
+  span.className = (kind === 'error') ? 'text-danger' : 'text-muted';
+  span.textContent = text;
+  el.appendChild(span);
+}
+
+document.querySelectorAll('.explain-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const row = btn.closest('.mistake-row');
+    const aid = row.dataset.aid;
+    const qid = row.dataset.qid;
+    const box = row.querySelector('.explanation-box');
+    const md = row.querySelector('.explanation-md');
+    btn.disabled = true;
+    const oldLabel = btn.textContent;
+    btn.textContent = '🧠 thinking…';
+    box.classList.remove('d-none');
+    setPlain(md, 'info', 'Generating…');
+    try {
+      const r = await fetch(`/course/{{ cid }}/mistakes/${aid}/${qid}/explain/`, {
+        method: 'POST', headers: {'X-CSRFToken': csrf},
+      });
+      const data = await r.json();
+      if (data.error) {
+        setPlain(md, 'error', 'Error: ' + data.error);
+        btn.textContent = oldLabel;
+      } else {
+        window.markedReady.then(() => {
+          window.renderMarkdownInto(md, data.explanation);
+          if (window.renderMathInElement) renderMathIn(md);
+        });
+        btn.textContent = 'Re-generate explanation';
+      }
+    } catch (e) {
+      setPlain(md, 'error', 'Failed: ' + e);
+      btn.textContent = oldLabel;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+});
+
+// Flag for regrade
+document.querySelectorAll('.flag-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const row = btn.closest('.mistake-row');
+    const form = row.querySelector('.regrade-form');
+    const isFlagged = btn.classList.contains('btn-danger');
+    if (isFlagged) {
+      // Unflag
+      if (!confirm('Remove this regrade flag?')) return;
+      btn.disabled = true;
+      const fd = new FormData();
+      fd.append('key', row.dataset.key);
+      fd.append('state', '0');
+      try {
+        const r = await fetch("{% url 'ui:regrade_flag_toggle' cid %}", {
+          method: 'POST', headers: {'X-CSRFToken': csrf}, body: fd,
+        });
+        const data = await r.json();
+        if (data.ok) {
+          btn.classList.remove('btn-danger');
+          btn.classList.add('btn-outline-danger');
+          btn.textContent = '🚩 Flag for regrade';
+          form.classList.add('d-none');
+        }
+      } catch (e) { /* swallow */ }
+      finally { btn.disabled = false; }
+    } else {
+      // Flag (open form, do not save until user clicks Save)
+      btn.classList.remove('btn-outline-danger');
+      btn.classList.add('btn-danger');
+      btn.textContent = '🚩 Flagged (open)';
+      form.classList.remove('d-none');
+      form.querySelector('.regrade-notes').focus();
+      // Persist initial empty flag
+      const fd = new FormData();
+      fd.append('key', row.dataset.key);
+      fd.append('state', '1');
+      fd.append('status', 'open');
+      try {
+        await fetch("{% url 'ui:regrade_flag_toggle' cid %}", {
+          method: 'POST', headers: {'X-CSRFToken': csrf}, body: fd,
+        });
+      } catch (e) { /* swallow */ }
+    }
+  });
+});
+
+document.querySelectorAll('.regrade-save-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const row = btn.closest('.mistake-row');
+    const form = btn.closest('.regrade-form');
+    const notes = form.querySelector('.regrade-notes').value;
+    const status = form.querySelector('.regrade-status').value;
+    btn.disabled = true;
+    const fd = new FormData();
+    fd.append('key', row.dataset.key);
+    fd.append('state', '1');
+    fd.append('notes', notes);
+    fd.append('status', status);
+    try {
+      const r = await fetch("{% url 'ui:regrade_flag_toggle' cid %}", {
+        method: 'POST', headers: {'X-CSRFToken': csrf}, body: fd,
+      });
+      const data = await r.json();
+      if (data.ok) {
+        const msg = form.querySelector('.regrade-saved-msg');
+        msg.classList.remove('d-none');
+        // Update flag-btn label with new status
+        const fb = row.querySelector('.flag-btn');
+        fb.textContent = '🚩 Flagged (' + status + ')';
+        setTimeout(() => msg.classList.add('d-none'), 1500);
+      }
+    } catch (e) { /* swallow */ }
+    finally { btn.disabled = false; }
+  });
+});
+
+// Bulk explain-all (parallel)
+document.getElementById('explain-all-btn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('explain-all-btn');
+  const spin = document.getElementById('explain-all-spin');
+  const label = btn.querySelector('.btn-label');
+  const progBox = document.getElementById('explain-all-progress');
+  btn.disabled = true;
+  spin.classList.remove('d-none');
+  label.textContent = 'Generating in parallel…';
+  progBox.classList.remove('d-none');
+  progBox.textContent = 'Submitting batch…';
+  try {
+    const r = await fetch("{% url 'ui:mistakes_explain_all' cid %}", {
+      method: 'POST', headers: {'X-CSRFToken': csrf},
+    });
+    const data = await r.json();
+    if (data.error) {
+      progBox.className = 'alert alert-danger w-100 mt-2 mb-0 small';
+      progBox.textContent = 'Error: ' + data.error;
+    } else {
+      progBox.className = 'alert alert-success w-100 mt-2 mb-0 small';
+      progBox.textContent = 'Done: ' + data.generated + ' generated, ' +
+        (data.failed||0) + ' failed (workers=' + data.workers + '). Reloading…';
+      setTimeout(() => window.location.reload(), 1200);
+    }
+  } catch (e) {
+    progBox.className = 'alert alert-danger w-100 mt-2 mb-0 small';
+    progBox.textContent = 'Failed: ' + e;
+  } finally {
+    btn.disabled = false;
+    spin.classList.add('d-none');
+    label.textContent = '🤖 Explain all wrong (parallel)';
+  }
+});
+
+// Per-row follow-up forms
+document.querySelectorAll('.mistake-fu-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const row = btn.closest('.mistake-row');
+    const aid = row.dataset.aid;
+    const qid = row.dataset.qid;
+    const ta = row.querySelector('.mistake-fu-q');
+    const thread = row.querySelector('.mistake-fu-thread');
+    const q = ta.value.trim();
+    if (!q) return;
+    btn.disabled = true; ta.disabled = true;
+    const ph = document.createElement('div');
+    ph.className = 'alert alert-info py-1 small';
+    ph.textContent = '⚡ Asking…';
+    thread.appendChild(ph);
+    const fd = new FormData();
+    fd.append('question', q);
+    try {
+      const r = await fetch(`/course/{{ cid }}/mistakes/${aid}/${qid}/followup/`, {
+        method: 'POST', headers: {'X-CSRFToken': csrf}, body: fd,
+      });
+      const data = await r.json();
+      ph.remove();
+      const block = document.createElement('div');
+      block.className = 'alert alert-light border-start border-4 border-info py-2 small';
+      const qline = document.createElement('div');
+      qline.className = 'text-muted';
+      qline.innerHTML = '↳ <strong>You:</strong> ';
+      qline.append(document.createTextNode(q));
+      block.appendChild(qline);
+      if (data.error) {
+        const err = document.createElement('div');
+        err.className = 'text-danger';
+        err.textContent = 'Error: ' + data.error;
+        block.appendChild(err);
+      } else {
+        const ans = document.createElement('div');
+        ans.className = 'mt-1';
+        window.renderMarkdownInto(ans, data.answer || '');
+        block.appendChild(ans);
+        if (window.renderMathInElement) renderMathIn(ans);
+      }
+      thread.appendChild(block);
+      ta.value = '';
+    } catch (e) {
+      ph.remove();
+      const err = document.createElement('div');
+      err.className = 'alert alert-danger py-1 small';
+      err.textContent = 'Failed: ' + e;
+      thread.appendChild(err);
+    } finally {
+      btn.disabled = false; ta.disabled = false; ta.focus();
+    }
+  });
+});
+document.querySelectorAll('.mistake-fu-q').forEach(ta => {
+  ta.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      ta.closest('.mistake-followup-form').querySelector('.mistake-fu-btn').click();
+    }
+  });
+});
+
+document.getElementById('pull-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('pull-btn');
+  const spin = document.getElementById('pull-spin');
+  const label = btn.querySelector('.btn-label');
+  btn.disabled = true;
+  spin.classList.remove('d-none');
+  label.textContent = 'Pulling…';
+  const fd = new FormData(e.target);
+  try {
+    const r = await fetch("{% url 'ui:mistakes_pull' cid %}", {
+      method: 'POST', headers: {'X-CSRFToken': csrf}, body: fd,
+    });
+    const data = await r.json();
+    if (data.error) alert('Error: ' + data.error);
+    else { alert('Done: ' + data.wrong_total + ' wrong across ' + data.assignments + ' assignments. Reloading…'); window.location.reload(); }
+  } catch (e2) { alert('Failed: ' + e2); }
+  finally { btn.disabled = false; spin.classList.add('d-none'); label.textContent = 'Re-pull from Gradescope'; }
+});
+</script>
+{% endblock %}
